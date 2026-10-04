@@ -2,12 +2,10 @@
 
 YouTube Music, Pocket Casts, and Audible — in one Omarchy bar chip with a keyboard-first panel.
 
-![Vibe Stage bar chip](preview-bar.png)
+![Vibe Stage bar chip](docs/preview-bar.png)
 
 One chip replaces three. The panel divides into source tabs: YouTube Music for your songs and playlists, Pocket Casts for your podcasts, and Audible for your audiobooks. Everything works from the keyboard.
 
-![Panel: YouTube Music](preview-ytmusic.png)
-![Panel: Audible library](preview-audible.png)
 
 ## Built on Solfa
 
