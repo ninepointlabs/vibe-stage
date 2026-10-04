@@ -621,7 +621,7 @@ Item {
         Text {
           objectName: "accountHelpText"
           text: root.signedIn && root.svc && root.svc.importedSession
-                ? "Copied from your browser. Signing out here leaves your browser signed in; signing out there signs Solfa out too."
+                ? "Copied from your browser. Signing out here leaves your browser signed in; signing out there signs you out of YouTube Music too."
               : root.signedIn ? "Switching signs you out, then opens Google's account chooser."
               : "Signing in opens a Google window. It closes when you are in."
           textFormat: Text.PlainText
@@ -788,7 +788,7 @@ Item {
           StepValue { row: 0; value: root.svc ? Model.sleepLabel(root.svc.sleepMode) : "Off" }
         }
         RowShell {
-          label: "When Solfa starts"
+          label: "When YouTube Music starts"
           row: 1
           StepValue { row: 1; value: root.svc && root.svc.setting("startPaused", false) ? "Resume paused" : "Resume playing" }
         }
@@ -883,7 +883,7 @@ Item {
         width: parent.width
         spacing: Style.space(6)
 
-        Text { text: "Solfa " + (root.svc ? (root.svc.solfaVersion || "0.1.0") : "0.1.0"); textFormat: Text.PlainText; color: root.fg; font.family: root.family; font.pixelSize: Style.font.body }
+        Text { text: "Vibe Stage " + (root.svc ? (root.svc.solfaVersion || "0.1.0") : "0.1.0"); textFormat: Text.PlainText; color: root.fg; font.family: root.family; font.pixelSize: Style.font.body }
         Text { text: "Engine: " + root.engineVersionText; textFormat: Text.PlainText; color: Util.alpha(root.fg, 0.6); font.family: root.family; font.pixelSize: Style.font.caption }
       }
     }

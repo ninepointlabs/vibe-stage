@@ -44,7 +44,7 @@ ShellRoot {
   // more on the next turn of the event loop.
   function inject(w, entry) {
     w.bar = barApi
-    w.moduleName = "io.github.sirallap.solfa"
+    w.moduleName = "ninepointlabs.vibe-stage"
     w.settings = JSON.parse(JSON.stringify(entry))
   }
 

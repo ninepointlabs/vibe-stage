@@ -95,7 +95,7 @@ test("expired requests", () => {
 test("global keys: only the free ones, ours do not count as taken", () => {
   const binds = JSON.stringify([
     { modmask: 64, key: "m", description: "Someone else's" },
-    { modmask: 72, key: "N", description: "Solfa: next song" }
+    { modmask: 72, key: "N", description: "Vibe Stage: next song" }
   ])
   const free = M.freeKeys(binds).map((k) => k.keys)
   assert.ok(!free.includes("SUPER + M"))
@@ -110,7 +110,7 @@ test("bind Lua unbinds first and calls the service over the shell's IPC", () => 
   // every IPC method a key calls exists on the service's handler
   const svc = fs.readFileSync(path.join(__dirname, "..", "Service.qml"), "utf8")
   for (const k of M.GLOBAL_KEYS) if (k.command !== "toggle") assert.match(svc, new RegExp("function " + k.command + "\\(\\): void"))
-  assert.equal(M.unbindLua(JSON.stringify([{ description: "Solfa: like" }])), "pcall(hl.unbind, [[SUPER + ALT + L]]); ")
+  assert.equal(M.unbindLua(JSON.stringify([{ description: "Vibe Stage: like" }])), "pcall(hl.unbind, [[SUPER + ALT + L]]); ")
 })
 
 // M3: no bare program name goes through Hyprland's exec (a PATH lookup, sh -c).
@@ -170,9 +170,9 @@ test("CODE_VERSION matches manifest.json's version", () => {
 })
 
 test("engineLineWhileDown asks for a shell restart only when the code on disk is newer", () => {
-  assert.equal(M.engineLineWhileDown(M.CODE_VERSION), "Starting Solfa")
-  assert.equal(M.engineLineWhileDown(""), "Starting Solfa")
-  assert.equal(M.engineLineWhileDown("9.9.9"), "Solfa was updated. Restart the shell to finish")
+  assert.equal(M.engineLineWhileDown(M.CODE_VERSION), "Starting Vibe Stage")
+  assert.equal(M.engineLineWhileDown(""), "Starting Vibe Stage")
+  assert.equal(M.engineLineWhileDown("9.9.9"), "Vibe Stage was updated. Restart the shell to finish")
 })
 
 test("SETTINGS_DEFAULTS matches manifest.json's barWidget.defaults exactly", () => {
@@ -218,13 +218,13 @@ test("eqPayload: off is always flat, whatever preset or custom bands are stored"
 test("settings writes: a stale echo from the shell never undoes a write it has not caught up with", () => {
   // Two quick writes; the shell's echo of the first arrives after both.
   let pending = { eqBands: "[1,0,0,0,0,0,0,0,0,0]", eqPreset: "custom" }
-  let r = M.mergePendingSettings({ id: "io.github.sirallap.solfa", eqBands: "[1,0,0,0,0,0,0,0,0,0]", eqPreset: "flat" }, pending)
+  let r = M.mergePendingSettings({ id: "ninepointlabs.vibe-stage", eqBands: "[1,0,0,0,0,0,0,0,0,0]", eqPreset: "flat" }, pending)
   assert.equal(r.settings.eqPreset, "custom", "write #2 is kept over the stale echo")
   assert.equal(r.settings.eqBands, "[1,0,0,0,0,0,0,0,0,0]")
   assert.deepEqual(Object.keys(r.pending), ["eqPreset"], "write #1 is confirmed by its echo")
-  r = M.mergePendingSettings({ id: "io.github.sirallap.solfa", eqBands: "[1,0,0,0,0,0,0,0,0,0]", eqPreset: "custom" }, r.pending)
+  r = M.mergePendingSettings({ id: "ninepointlabs.vibe-stage", eqBands: "[1,0,0,0,0,0,0,0,0,0]", eqPreset: "custom" }, r.pending)
   assert.equal(Object.keys(r.pending).length, 0, "all confirmed")
-  assert.equal(r.settings.id, "io.github.sirallap.solfa", "other keys of the entry are kept")
+  assert.equal(r.settings.id, "ninepointlabs.vibe-stage", "other keys of the entry are kept")
 })
 
 test("launch key: one string from one settings snapshot, as the bridge parses it", () => {
@@ -241,16 +241,16 @@ test("settings pushed before the shell has handed over the entry are not real", 
   assert.equal(M.hasSettings({}), false, "the widget's default, before the shell assigns its entry")
   assert.equal(M.hasSettings(null), false)
   assert.equal(M.hasSettings(undefined), false)
-  assert.equal(M.hasSettings({ id: "io.github.sirallap.solfa" }), true, "an entry with only its id is real")
+  assert.equal(M.hasSettings({ id: "ninepointlabs.vibe-stage" }), true, "an entry with only its id is real")
   assert.equal(M.hasSettings({ browser: "/usr/bin/brave" }), true)
 })
 
 test("settings reset: defaults over the current entry, other keys kept", () => {
-  const next = M.settingsAfterReset({ id: "io.github.sirallap.solfa", eqEnabled: true, recycleHours: 30, somethingElse: 7 })
+  const next = M.settingsAfterReset({ id: "ninepointlabs.vibe-stage", eqEnabled: true, recycleHours: 30, somethingElse: 7 })
   assert.equal(next.eqEnabled, false)
   assert.equal(next.recycleHours, 12)
   assert.equal(next.somethingElse, 7)
-  assert.equal(next.id, "io.github.sirallap.solfa")
+  assert.equal(next.id, "ninepointlabs.vibe-stage")
 })
 
 test("recycle knobs are clamped to a range the page can live with", () => {
@@ -403,4 +403,46 @@ test("Settings cycles the engine's browser over what the bridge found installed"
   assert.doesNotMatch(line, /\/usr\/bin\//, "no fixed list of paths that may not exist here")
   const service = fs.readFileSync(path.join(__dirname, "..", "Service.qml"), "utf8")
   assert.match(service, /root\.browsers = data\.browsers/)
+})
+
+// ------------------------------------------------------------ AudibleModel.js
+const amSrc = fs.readFileSync(path.join(__dirname, "..", "lib", "AudibleModel.js"), "utf8").replace(/^\.pragma library\s*$/m, "")
+const AM = {}
+vm.createContext(AM)
+vm.runInContext(amSrc, AM)
+
+test("audiobook sort: natural, case aside, blanks last, ties in the bridge's order", () => {
+  const books = [
+    { asin: "A1", title: "Zebra Days", authors: ["Mo Author"] },
+    { asin: "A2", title: "book 10", authors: ["al Writer", "Zed Co"] },
+    { asin: "A3", title: "Book 2", authors: ["Mo Author"] },
+    { asin: "A4", title: "", authors: [] },
+    { asin: "A5", title: "Book 2", authors: "Mo Author" }
+  ]
+  const order = (o) => AM.sortBooks(books, o).map((b) => b.asin).join(",")
+  assert.equal(order("recent"), "A1,A2,A3,A4,A5")
+  assert.equal(order("title"), "A3,A5,A2,A1,A4")
+  assert.equal(order("author"), "A2,A3,A5,A1,A4")
+  assert.equal(order("nonsense"), "A1,A2,A3,A4,A5")
+  // A copy: the library keeps the bridge's order.
+  assert.equal(books.map((b) => b.asin).join(","), "A1,A2,A3,A4,A5")
+  assert.equal(AM.sortBooks(null, "title").length, 0)
+})
+
+test("audiobook sort: text compare", () => {
+  assert.ok(AM.compareText("Book 2", "Book 10") < 0)
+  assert.ok(AM.compareText("book 2", "Book 2") === 0)
+  assert.ok(AM.compareText("Part 02", "Part 2") === 0)
+  assert.ok(AM.compareText("", "a") > 0)
+  assert.ok(AM.compareText("a", null) < 0)
+  assert.ok(AM.compareText("Dune", "Dune Messiah") < 0)
+})
+
+test("audiobook sort orders cycle and have labels", () => {
+  assert.equal(AM.nextSort("recent"), "title")
+  assert.equal(AM.nextSort("title"), "author")
+  assert.equal(AM.nextSort("author"), "recent")
+  assert.equal(AM.nextSort("bogus"), "title")
+  assert.equal(AM.sortLabel("author"), "Author")
+  assert.equal(AM.sortLabel("bogus"), "Recent")
 })

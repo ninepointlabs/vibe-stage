@@ -1,0 +1,1174 @@
+#!/usr/bin/python3 -I
+"""audible-bridge — Vibe Stage's Audiobooks source: Audible's library and an mpv player.
+
+It speaks the same line protocol as vibe-stage-bridge and pocketcasts-bridge,
+one JSON object per line, each answer carrying the request's id:
+
+    -> {"id": 1, "op": "library", "args": {}}
+    <- {"id": 1, "type": "library", "ok": true, "data": {"items": [...], "total": 42}}
+    <- {"id": 2, "type": "play", "ok": false, "code": "...", "error": "..."}
+
+Ops: hello, status, login, logout, library, player, play, pause, resume, stop,
+seek, volume, speed.
+
+    audible-bridge serve [--socket PATH] [--lifeline]
+    audible-bridge status
+
+Sign-in goes through the `audible` package (PyPI), which registers a virtual
+Audible device on the account. Its credentials are kept in
+$XDG_STATE_HOME/ninepointlabs.vibe-stage/audible-auth.json (0600, in a 0700
+directory); the password itself is never stored. logout deregisters that
+device and deletes the file.
+
+Books play in mpv, started detached and driven over JSON IPC at
+$XDG_RUNTIME_DIR/ninepointlabs.vibe-stage/audible-mpv.sock. Audible hands out
+AAXC files (MP4 with AES-128 audio); the per-book key and IV come from the
+license voucher and reach mpv's demuxer as lavf options over that socket, so
+they never appear on a command line. The listening position is written back
+to Audible every 30 seconds while playing, and on pause, seek and stop.
+
+The bridge socket defaults to $XDG_RUNTIME_DIR/ninepointlabs.vibe-stage/audible.sock
+(0600, in a 0700 directory). With --lifeline it exits when its stdin closes;
+mpv keeps playing and a restarted bridge picks it back up.
+
+Needs the `audible` package. With `-I` user site-packages are ignored, so it
+is looked for system-wide first, then in a venv of yours at
+$XDG_DATA_HOME/ninepointlabs.vibe-stage/audible-venv. Without it the bridge
+still answers, with code "missing_dependency" for anything that needs Audible.
+"""
+
+import argparse
+import contextlib
+import glob
+import json
+import os
+import signal
+import socket
+import stat
+import sys
+import threading
+import time
+
+PLUGIN_ID = "ninepointlabs.vibe-stage"
+SOCKET_NAME = "audible.sock"
+MPV_SOCKET_NAME = "audible-mpv.sock"
+AUTH_NAME = "audible-auth.json"
+PLAYBACK_NAME = "audible-playback.json"
+VENV_NAME = "audible-venv"
+NAME = "audible-bridge"
+VERSION = "0.1.0"
+PROTOCOL = 1
+FEATURES = ["library", "playback", "position-sync"]
+MAX_LINE = 64 * 1024
+MAX_CLIENTS = 8
+SYNC_EVERY = 30.0
+API_TIMEOUT = 30
+LIBRARY_PAGE = 1000
+LIBRARY_MAX_PAGES = 20
+POSITIONS_BATCH = 25
+LIBRARY_GROUPS = "product_desc,product_attrs,media,contributors,is_finished,percent_complete"
+LICENSE_GROUPS = "last_position_heard,pdf_url,content_reference,chapter_info"
+APPROVAL_WAIT = 120.0
+SPEED_MIN, SPEED_MAX = 0.5, 3.5
+MPV_PROPERTIES = ("path", "pause", "time-pos", "duration", "volume", "speed", "eof-reached", "idle-active")
+
+
+def log(*parts):
+    print("audible-bridge:", *parts, file=sys.stderr, flush=True)
+
+
+# ------------------------------------------------------------------ audible
+
+def user_dir(env, *fallback):
+    """An XDG base directory: the variable when it is a clean absolute path,
+    else the default under $HOME."""
+    value = os.environ.get(env) or ""
+    if value.startswith("/") and os.path.normpath(value) == value:
+        return value
+    return os.path.join(os.path.expanduser("~"), *fallback)
+
+
+def owned_by_you(path):
+    try:
+        st = os.stat(path)
+    except OSError:
+        return False
+    return st.st_uid == os.geteuid() and not st.st_mode & 0o022
+
+
+def load_audible():
+    """Import the audible package: system-wide, else from the plugin's venv.
+    Returns (module, error text)."""
+    try:
+        import audible
+        return audible, ""
+    except ImportError:
+        pass
+    venv = os.path.join(user_dir("XDG_DATA_HOME", ".local", "share"), PLUGIN_ID, VENV_NAME)
+    if owned_by_you(venv):
+        version = "python%d.%d" % sys.version_info[:2]
+        for site in sorted(glob.glob(os.path.join(venv, "lib", version, "site-packages"))):
+            if owned_by_you(site) and site not in sys.path:
+                sys.path.append(site)
+        try:
+            import audible
+            return audible, ""
+        except ImportError:
+            pass
+    return None, ("The audible Python package is not installed. Install it system-wide, "
+                  "or run: python3 -m venv %s && %s/bin/pip install audible" % (venv, venv))
+
+
+audible, AUDIBLE_ERROR = load_audible()
+
+
+class BridgeError(Exception):
+    def __init__(self, code, message):
+        super().__init__(message)
+        self.code = code
+        self.message = message
+
+
+def need_audible():
+    if audible is None:
+        raise BridgeError("missing_dependency", AUDIBLE_ERROR)
+
+
+def translate(err):
+    """Any exception from a command, as a BridgeError the client can show."""
+    if isinstance(err, BridgeError):
+        return err
+    if audible is not None:
+        exc = audible.exceptions
+        if isinstance(err, exc.Unauthorized):
+            return BridgeError("unauthorized", "Audible refused the saved sign-in; sign in again")
+        if isinstance(err, exc.NotFoundError):
+            return BridgeError("not_found", "Audible does not know that title")
+        if isinstance(err, exc.RatelimitError):
+            return BridgeError("rate_limited", "Audible is rate limiting requests; try again shortly")
+        if isinstance(err, (exc.NetworkError, exc.NotResponding)):
+            return BridgeError("network", "Could not reach Audible (%s)" % err)
+        if isinstance(err, exc.StatusError):
+            return BridgeError("api_error", "Audible answered with an error (%s)" % err)
+        if isinstance(err, exc.AudibleError):
+            return BridgeError("api_error", str(err) or err.__class__.__name__)
+        httpx = sys.modules.get("httpx")
+        if httpx is not None and isinstance(err, httpx.HTTPError):
+            return BridgeError("network", "Could not reach Audible (%s)" % err)
+    if isinstance(err, OSError):
+        return BridgeError("io", str(err))
+    return BridgeError("internal", "%s: %s" % (err.__class__.__name__, err))
+
+
+# -------------------------------------------------------------------- files
+
+def private_dir(base):
+    """base/ninepointlabs.vibe-stage as a 0700 directory of yours."""
+    directory = os.path.join(base, PLUGIN_ID)
+    os.makedirs(directory, mode=0o700, exist_ok=True)
+    check_dir(directory)
+    return directory
+
+
+def state_path(name):
+    return os.path.join(private_dir(user_dir("XDG_STATE_HOME", ".local", "state")), name)
+
+
+def runtime_base():
+    runtime = os.environ.get("XDG_RUNTIME_DIR") or "/run/user/%d" % os.geteuid()
+    if not runtime.startswith("/") or os.path.normpath(runtime) != runtime:
+        runtime = "/run/user/%d" % os.geteuid()
+    return runtime
+
+
+def runtime_path(name):
+    return os.path.join(private_dir(runtime_base()), name)
+
+
+def write_private(path, data):
+    """Write JSON to path atomically, 0600 from the first byte."""
+    tmp = "%s.%d.tmp" % (path, os.getpid())
+    with contextlib.suppress(FileNotFoundError):
+        os.unlink(tmp)
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
+
+
+def read_private(path):
+    """JSON from a regular file of yours, or None."""
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW)
+    except OSError:
+        return None
+    with os.fdopen(fd, "r", encoding="utf-8") as f:
+        st = os.fstat(f.fileno())
+        if not stat.S_ISREG(st.st_mode) or st.st_uid != os.geteuid():
+            return None
+        try:
+            data = json.load(f)
+        except ValueError:
+            return None
+    return data if isinstance(data, dict) else None
+
+
+def remove(path):
+    with contextlib.suppress(FileNotFoundError):
+        os.unlink(path)
+
+
+# ---------------------------------------------------------------------- mpv
+
+def mpv_socket_path():
+    return runtime_path(MPV_SOCKET_NAME)
+
+
+def trusted_mpv():
+    """mpv from a root-owned system directory, never from $PATH."""
+    for candidate in ("/usr/bin/mpv", "/usr/local/bin/mpv", "/bin/mpv"):
+        real = os.path.realpath(candidate)
+        try:
+            st = os.stat(real)
+        except OSError:
+            continue
+        if stat.S_ISREG(st.st_mode) and st.st_uid == 0 and os.access(real, os.X_OK):
+            return real
+    return ""
+
+
+def mpris_script():
+    """mpv-mpris, when installed, so media keys and playerctl see the player."""
+    for candidate in ("/usr/lib/mpv-mpris/mpris.so", "/usr/lib/mpv/mpris.so"):
+        real = os.path.realpath(candidate)
+        try:
+            st = os.stat(real)
+        except OSError:
+            continue
+        if stat.S_ISREG(st.st_mode) and st.st_uid == 0:
+            return real
+    return ""
+
+
+class Mpv:
+    """One connection to the bridge's mpv over its JSON IPC socket."""
+
+    def __init__(self, sock):
+        self.sock = sock
+        self.buffer = b""
+        self.next_id = 1
+
+    @classmethod
+    def connect(cls, timeout=2.0):
+        """The running player, or None when there isn't one."""
+        try:
+            path = mpv_socket_path()
+            st = os.lstat(path)
+        except OSError:
+            return None
+        if not stat.S_ISSOCK(st.st_mode) or st.st_uid != os.geteuid():
+            return None
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.settimeout(timeout)
+        try:
+            sock.connect(path)
+        except OSError:
+            sock.close()
+            return None
+        return cls(sock)
+
+    def close(self):
+        with contextlib.suppress(OSError):
+            self.sock.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+
+    def lines(self):
+        while b"\n" in self.buffer:
+            raw, self.buffer = self.buffer.split(b"\n", 1)
+            try:
+                message = json.loads(raw.decode("utf-8", "replace"))
+            except ValueError:
+                continue
+            if isinstance(message, dict):
+                yield message
+
+    def command(self, *args):
+        """Run one mpv command and return its data, or raise BridgeError."""
+        request_id = self.next_id
+        self.next_id += 1
+        line = json.dumps({"command": list(args), "request_id": request_id}) + "\n"
+        try:
+            self.sock.sendall(line.encode("utf-8"))
+            deadline = time.monotonic() + 3
+            while time.monotonic() < deadline:
+                for reply in self.lines():
+                    if reply.get("request_id") != request_id or "error" not in reply:
+                        continue  # an event
+                    if reply.get("error") != "success":
+                        raise BridgeError("player", "mpv: %s" % reply.get("error"))
+                    return reply.get("data")
+                chunk = self.sock.recv(65536)
+                if not chunk:
+                    break
+                if len(self.buffer) > 1024 * 1024:
+                    raise BridgeError("player", "mpv sent too much at once")
+                self.buffer += chunk
+        except OSError as err:
+            raise BridgeError("player", "Lost the connection to mpv (%s)" % err)
+        raise BridgeError("player", "mpv did not answer")
+
+    def wait_for_load(self, timeout=30.0):
+        """After a loadfile: True once mpv says the file opened, BridgeError if
+        it says the file failed, False when still loading after `timeout`."""
+        deadline = time.monotonic() + timeout
+        try:
+            while time.monotonic() < deadline:
+                for event in self.lines():
+                    if event.get("event") == "file-loaded":
+                        return True
+                    if event.get("event") == "end-file" and event.get("reason") == "error":
+                        detail = str(event.get("file_error") or "unknown error")[:160]
+                        raise BridgeError("playback_failed", "mpv could not play that book (%s)" % detail)
+                self.sock.settimeout(max(0.1, deadline - time.monotonic()))
+                chunk = self.sock.recv(65536)
+                if not chunk:
+                    break
+                if len(self.buffer) > 1024 * 1024:
+                    self.buffer = b""
+                self.buffer += chunk
+        except OSError:
+            pass
+        return False
+
+    def get(self, name, default=None):
+        try:
+            return self.command("get_property", name)
+        except BridgeError:
+            return default
+
+    def set(self, name, value):
+        return self.command("set_property", name, value)
+
+    def snapshot(self):
+        return {name: self.get(name) for name in MPV_PROPERTIES}
+
+
+def mpv_quote(value):
+    """mpv's length-prefixed quoting for one key=value list entry."""
+    value = str(value)
+    return "%%%d%%%s" % (len(value.encode("utf-8")), value)
+
+
+def child_env():
+    """What mpv needs to find the session's audio server and bus."""
+    keep = ("HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "XDG_RUNTIME_DIR", "XDG_CONFIG_HOME",
+            "XDG_CACHE_HOME", "XDG_STATE_HOME", "DBUS_SESSION_BUS_ADDRESS", "PULSE_SERVER",
+            "PIPEWIRE_REMOTE", "WAYLAND_DISPLAY", "DISPLAY")
+    env = {k: os.environ[k] for k in keep if os.environ.get(k)}
+    env["PATH"] = "/usr/local/bin:/usr/bin:/bin"
+    return env
+
+
+def start_mpv(volume, speed):
+    """Start the player detached (it outlives the bridge) and wait for its
+    socket. --no-config keeps ~/.config/mpv scripts and hooks out of it."""
+    mpv = trusted_mpv()
+    if not mpv:
+        raise BridgeError("no_mpv", "mpv is not installed; run: omarchy pkg add mpv")
+    path = mpv_socket_path()
+    with contextlib.suppress(OSError):
+        st = os.lstat(path)
+        if stat.S_ISSOCK(st.st_mode) and st.st_uid == os.geteuid():
+            os.unlink(path)  # a dead player's socket
+    argv = [mpv, "--no-config", "--idle=yes", "--no-video", "--no-terminal", "--keep-open=yes",
+            "--ytdl=no", "--input-ipc-server=" + path, "--title=Audible",
+            "--audio-client-name=vibe-stage-audible", "--cache=yes", "--network-timeout=30",
+            "--volume=%d" % volume, "--speed=%s" % speed]
+    argv.extend(a for a in os.environ.get("AUDIBLE_BRIDGE_MPV_ARGS", "").split() if a.startswith("--"))
+    script = mpris_script()
+    if script:
+        argv.append("--script=" + script)
+    devnull = os.open(os.devnull, os.O_RDWR | os.O_CLOEXEC)
+    try:
+        os.posix_spawn(mpv, argv, child_env(), setsid=True,
+                       file_actions=[(os.POSIX_SPAWN_DUP2, devnull, 0), (os.POSIX_SPAWN_DUP2, devnull, 1),
+                                     (os.POSIX_SPAWN_DUP2, devnull, 2)])
+    except OSError as err:
+        raise BridgeError("player", "Could not start mpv (%s)" % err)
+    finally:
+        os.close(devnull)
+    deadline = time.monotonic() + 6
+    while time.monotonic() < deadline:
+        player = Mpv.connect(timeout=1.0)
+        if player:
+            return player
+        time.sleep(0.1)
+    raise BridgeError("player", "mpv started but its control socket never appeared")
+
+
+def quit_mpv():
+    """Ask mpv to quit, wait until its socket stops answering, then remove it."""
+    player = Mpv.connect()
+    if player:
+        with player:
+            with contextlib.suppress(BridgeError):
+                player.command("quit")
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline:
+            probe = Mpv.connect(timeout=0.3)
+            if not probe:
+                break
+            probe.close()
+            time.sleep(0.1)
+    with contextlib.suppress(OSError):
+        path = mpv_socket_path()
+        st = os.lstat(path)
+        if stat.S_ISSOCK(st.st_mode) and st.st_uid == os.geteuid():
+            os.unlink(path)
+
+
+# ------------------------------------------------------------------- shapes
+
+def as_float(value, default=0.0):
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return default
+    return number if number == number else default
+
+
+def clamp_volume(value):
+    return int(max(0, min(100, round(as_float(value, 100)))))
+
+
+def clamp_speed(value):
+    return round(max(SPEED_MIN, min(SPEED_MAX, as_float(value, 1.0))), 2)
+
+
+def names(people):
+    return [str(p.get("name")).strip() for p in people or [] if isinstance(p, dict) and p.get("name")]
+
+
+def largest_image(product):
+    images = product.get("product_images") or {}
+    best, best_size = "", -1
+    if isinstance(images, dict):
+        for size, url in images.items():
+            try:
+                px = int(size)
+            except (TypeError, ValueError):
+                px = 0
+            if isinstance(url, str) and url.startswith("https://") and px > best_size:
+                best, best_size = url, px
+    if not best:
+        for key in ("cover_url", "image_url"):
+            if isinstance(product.get(key), str) and product[key].startswith("https://"):
+                return product[key]
+    return best
+
+
+def book_item(product, position_ms=None):
+    """One library entry in the shape the shell reads."""
+    duration = as_float(product.get("runtime_length_min")) * 60
+    position = as_float(position_ms) / 1000 if position_ms is not None else 0.0
+    percent = as_float(product.get("percent_complete"))
+    if product.get("is_finished"):
+        status = "finished"
+    elif position > 0 or percent > 0:
+        status = "in-progress"
+    else:
+        status = "not-started"
+    if position <= 0 < percent and duration:
+        position = duration * percent / 100
+    return {
+        "asin": str(product.get("asin") or ""),
+        "title": str(product.get("title") or ""),
+        "authors": names(product.get("authors")),
+        "narrator": ", ".join(names(product.get("narrators"))),
+        "cover_url": largest_image(product),
+        "duration_sec": int(round(duration)),
+        "last_position_sec": round(position, 1),
+        "status": status,
+    }
+
+
+def idle_player():
+    return {"active": False, "playing": False, "item": None, "position": 0.0, "duration": 0.0,
+            "volume": 100, "speed": 1.0}
+
+
+# ------------------------------------------------------------------- bridge
+
+class Bridge:
+    """Everything the bridge knows: the sign-in, the library and the book in mpv.
+    `lock` guards the fields; `op_lock` keeps long operations (login, play,
+    stop, logout) from interleaving."""
+
+    def __init__(self):
+        self.lock = threading.RLock()
+        self.op_lock = threading.Lock()
+        self.auth = None
+        self.email = ""
+        self.saved_auth = ""
+        self.library = []
+        self.library_loaded = False
+        self.item = None        # the book loaded into mpv: item dict + "acr"
+        self.volume = 100
+        self.speed = 1.0
+        self.last_sync = 0.0
+        self.last_synced_ms = None
+        self.load_auth()
+        self.adopt_player()
+
+    # -- auth
+
+    def load_auth(self):
+        if audible is None:
+            return
+        try:
+            data = read_private(state_path(AUTH_NAME))
+        except OSError as err:
+            log("cannot read the saved sign-in:", err)
+            return
+        if not data or not isinstance(data.get("auth"), dict):
+            return
+        try:
+            auth = audible.Authenticator.from_dict(dict(data["auth"]))
+        except Exception as err:  # a damaged or outdated file: stay signed out
+            log("the saved sign-in is unusable:", err)
+            return
+        if not auth.device_info or not auth.customer_info:
+            log("the saved sign-in has no device registration")
+            return
+        self.auth = auth
+        self.email = str(data.get("email") or "")
+        self.saved_auth = json.dumps(auth.to_dict(), sort_keys=True)
+        log("signed in as", self.email or "(unknown email)")
+
+    def save_auth(self):
+        """Persist the sign-in when it changed (a refreshed access token)."""
+        with self.lock:
+            auth, email = self.auth, self.email
+        if auth is None:
+            return
+        current = json.dumps(auth.to_dict(), sort_keys=True)
+        if current == self.saved_auth:
+            return
+        write_private(state_path(AUTH_NAME), {"version": 1, "email": email, "auth": auth.to_dict()})
+        self.saved_auth = current
+
+    def client(self):
+        need_audible()
+        with self.lock:
+            auth = self.auth
+        if auth is None:
+            raise BridgeError("not_authenticated", "Sign in to Audible first")
+        return audible.Client(auth=auth, timeout=API_TIMEOUT)
+
+    def call(self, method, path, **kwargs):
+        """One Audible API request; saves the sign-in if it was refreshed."""
+        with self.client() as client:
+            try:
+                return getattr(client, method)(path, **kwargs)
+            finally:
+                with contextlib.suppress(Exception):
+                    self.save_auth()
+
+    def login(self, args):
+        need_audible()
+        with self.lock:
+            if self.auth is not None:
+                return {"authenticated": True, "email": self.email, "already": True}
+        email = str(args.get("email") or "").strip()
+        password = str(args.get("password") or "")
+        locale = str(args.get("locale") or "us").strip().lower()
+        if not email or not password:
+            raise BridgeError("bad_request", "Email and password are required")
+        otp = str(args.get("otp") or "").strip()
+        cvf = str(args.get("cvf") or "").strip()
+
+        def otp_callback():
+            if otp:
+                return otp
+            raise BridgeError("otp_required", "Amazon asks for a one-time code; send it again with \"otp\"")
+
+        def cvf_callback():
+            if cvf:
+                return cvf
+            raise BridgeError("cvf_required", "Amazon sent a verification code; send it again with \"cvf\"")
+
+        def captcha_callback(url):
+            raise BridgeError("captcha_required", "Amazon wants a CAPTCHA solved; sign in to amazon.com "
+                              "in a browser once, then try again")
+
+        started = time.monotonic()
+
+        def approval_callback():
+            if time.monotonic() - started > APPROVAL_WAIT:
+                raise BridgeError("approval_timeout", "The sign-in was not approved in time")
+            time.sleep(3)
+
+        try:
+            auth = audible.Authenticator.from_login(
+                email, password, locale=locale, otp_callback=otp_callback, cvf_callback=cvf_callback,
+                captcha_callback=captcha_callback, approval_callback=approval_callback)
+        except BridgeError:
+            raise
+        except Exception as err:
+            failure = translate(err)
+            if failure.code in ("internal", "api_error"):
+                raise BridgeError("login_failed", "Sign-in failed (%s)" % err)
+            raise failure
+        write_private(state_path(AUTH_NAME), {"version": 1, "email": email, "auth": auth.to_dict()})
+        with self.lock:
+            self.auth, self.email = auth, email
+            self.saved_auth = json.dumps(auth.to_dict(), sort_keys=True)
+            self.library, self.library_loaded = [], False
+        log("signed in as", email)
+        return {"authenticated": True, "email": email}
+
+    def logout(self):
+        with self.lock:
+            auth = self.auth
+        if self.item:
+            self.stop()
+        if auth is not None:
+            try:  # free the device slot on the account; signing out works regardless
+                auth.deregister_device()
+            except Exception as err:
+                log("could not deregister the device:", err)
+        remove(state_path(AUTH_NAME))
+        with self.lock:
+            self.auth, self.email, self.saved_auth = None, "", ""
+            self.library, self.library_loaded = [], False
+        return {"authenticated": False, "email": ""}
+
+    # -- library
+
+    def last_positions(self, asins):
+        """asin -> (position_ms, last_updated) from Audible, best effort."""
+        found = {}
+        for start in range(0, len(asins), POSITIONS_BATCH):
+            batch = asins[start:start + POSITIONS_BATCH]
+            try:
+                reply = self.call("get", "1.0/annotations/lastpositions", asins=",".join(batch))
+            except Exception as err:
+                log("could not read listening positions:", translate(err).message)
+                break
+            for entry in (reply or {}).get("asin_last_position_heard_annots") or []:
+                heard = entry.get("last_position_heard") or {}
+                if entry.get("asin") and heard.get("status") != "DoesNotExist":
+                    found[entry["asin"]] = (heard.get("position_ms"), str(heard.get("last_updated") or ""))
+        return found
+
+    def fetch_library(self):
+        products = []
+        for page in range(1, LIBRARY_MAX_PAGES + 1):
+            reply = self.call("get", "1.0/library", num_results=LIBRARY_PAGE, page=page,
+                              response_groups=LIBRARY_GROUPS, image_sizes="500,1215",
+                              sort_by="-PurchaseDate")
+            batch = (reply or {}).get("items") or []
+            products.extend(p for p in batch if isinstance(p, dict) and p.get("asin"))
+            if len(batch) < LIBRARY_PAGE:
+                break
+        positions = self.last_positions([p["asin"] for p in products])
+        rows = []
+        for order, product in enumerate(products):
+            position_ms, updated = positions.get(product["asin"], (None, ""))
+            item = book_item(product, position_ms)
+            rows.append((updated, -order, item))
+        # Most recently listened first, then the rest by purchase date.
+        rows.sort(key=lambda r: (r[0], r[1]), reverse=True)
+        items = [r[2] for r in rows]
+        with self.lock:
+            self.library, self.library_loaded = items, True
+        return items
+
+    def get_library(self, args):
+        need_audible()
+        with self.lock:
+            cached = list(self.library) if self.library_loaded and not args.get("refresh") else None
+        items = cached if cached is not None else self.fetch_library()
+        return {"items": items, "total": len(items)}
+
+    def find_book(self, asin):
+        with self.lock:
+            for item in self.library:
+                if item["asin"] == asin:
+                    return dict(item)
+        return None
+
+    # -- license
+
+    def license(self, asin):
+        """Ask Audible for the book: (url, lavf options, acr, position_ms, runtime_ms)."""
+        import secrets
+        body = {"supported_drm_types": ["Mpeg", "Adrm"], "consumption_type": "Download",
+                "quality": "High", "response_groups": LICENSE_GROUPS}
+        headers = {"X-Amzn-RequestId": secrets.token_hex(20).upper(),
+                   "X-ADP-SW": "37801821", "X-ADP-Transport": "WIFI", "X-ADP-LTO": "120",
+                   "X-Device-Type-Id": "A2CZJZGLK2JJVM", "device_idiom": "phone"}
+        try:
+            reply = self.call("post", "1.0/content/%s/licenserequest" % asin,
+                              body=body, headers=headers)
+        except Exception as err:
+            failure = translate(err)
+            if failure.code in ("unauthorized", "network", "rate_limited"):
+                raise failure
+            raise BridgeError("license_denied", "Audible would not license this book (%s)" % failure.message)
+        content = reply["content_license"]
+        meta = content.get("content_metadata") or {}
+        url = ((meta.get("content_url") or {}).get("offline_url") or "")
+        if not url.startswith("https://"):
+            raise BridgeError("license_failed", "The license has no stream address")
+        drm = content.get("drm_type") or ""
+        # The voucher (Mpeg style) is what mpv can play. The drm_type field may say
+        # "Adrm" while the response still carries a voucher — decrypt it first.
+        if "license_response" in content:
+            try:
+                voucher = audible.aescipher.decrypt_voucher_from_licenserequest(self.auth, reply)
+            except Exception as err:
+                raise BridgeError("license_failed", "Could not decrypt the license (%s)" % err)
+            key, iv = str(voucher.get("key") or ""), str(voucher.get("iv") or "")
+            if not key or not iv:
+                raise BridgeError("license_failed", "The license voucher has no key")
+            options = {"audible_key": key, "audible_iv": iv}
+        elif drm == "Adrm":
+            try:
+                activation = self.auth.get_activation_bytes()
+            except Exception as err:
+                raise BridgeError("license_failed", "Could not get activation bytes (%s)" % err)
+            finally:
+                with contextlib.suppress(Exception):
+                    self.save_auth()
+            options = {"activation_bytes": str(activation)}
+        else:
+            raise BridgeError("unsupported_drm", "This book uses %s, which mpv cannot play" % (drm or "unknown DRM"))
+        acr = str((meta.get("content_reference") or {}).get("acr") or "")
+        position = (meta.get("last_position_heard") or {}).get("position_ms")
+        runtime = (meta.get("chapter_info") or {}).get("runtime_length_ms")
+        return url, options, acr, position, runtime
+
+    # -- player
+
+    def write_playback(self):
+        with self.lock:
+            item = dict(self.item) if self.item else None
+        try:
+            path = runtime_path(PLAYBACK_NAME)
+            if item:
+                write_private(path, item)
+            else:
+                remove(path)
+        except OSError as err:
+            log("could not record the playing book:", err)
+
+    def adopt_player(self):
+        """After a restart: pick up the book a previous bridge left playing."""
+        try:
+            item = read_private(runtime_path(PLAYBACK_NAME))
+        except OSError:
+            item = None
+        if not item or not item.get("asin"):
+            return
+        player = Mpv.connect()
+        if not player:
+            with contextlib.suppress(OSError):
+                remove(runtime_path(PLAYBACK_NAME))
+            return
+        with player:
+            self.volume = clamp_volume(player.get("volume", 100))
+            self.speed = clamp_speed(player.get("speed", 1.0))
+        self.item = item
+        log("picked up", item.get("title") or item["asin"], "from a running mpv")
+
+    def player_state(self):
+        with self.lock:
+            item = dict(self.item) if self.item else None
+            volume, speed = self.volume, self.speed
+        state = idle_player()
+        state.update(volume=volume, speed=speed)
+        if not item:
+            return state
+        player = Mpv.connect()
+        if not player:
+            return state
+        with player:
+            snap = player.snapshot()
+        if snap.get("idle-active") or not snap.get("path"):
+            return state
+        public = {k: item.get(k) for k in ("asin", "title", "authors", "narrator", "cover_url")}
+        duration = as_float(snap.get("duration")) or as_float(item.get("duration_sec"))
+        state.update(active=True, playing=not snap.get("pause") and not snap.get("eof-reached"),
+                     item=public, position=round(as_float(snap.get("time-pos")), 2),
+                     duration=round(duration, 2),
+                     volume=clamp_volume(snap.get("volume") if snap.get("volume") is not None else volume),
+                     speed=clamp_speed(snap.get("speed") if snap.get("speed") is not None else speed))
+        if snap.get("eof-reached") and duration:
+            state["position"] = round(duration, 2)
+        return state
+
+    def play(self, args):
+        need_audible()
+        asin = str(args.get("asin") or "").strip()
+        if not asin or not asin.isalnum() or len(asin) > 20:
+            raise BridgeError("bad_request", "A valid ASIN is required")
+        self.client().close()  # fails fast when signed out
+        if self.item:
+            self.stop()
+        url, options, acr, position_ms, runtime_ms = self.license(asin)
+        item = self.find_book(asin) or {"asin": asin, "title": asin, "authors": [], "narrator": "",
+                                        "cover_url": "", "duration_sec": 0, "last_position_sec": 0.0,
+                                        "status": "in-progress"}
+        if runtime_ms:
+            item["duration_sec"] = int(as_float(runtime_ms) / 1000)
+        if args.get("from_position") is not None:
+            start = max(0.0, as_float(args.get("from_position")))
+        elif position_ms is not None:
+            start = as_float(position_ms) / 1000
+        else:
+            start = as_float(item.get("last_position_sec"))
+        if item["duration_sec"] and start >= item["duration_sec"] - 5:
+            start = 0.0  # a finished book starts over
+        player = Mpv.connect() or start_mpv(self.volume, self.speed)
+        with player:
+            # The key goes over the socket, never on a command line.
+            player.set("demuxer-lavf-o", options)
+            title = item.get("title") or asin
+            player.command("loadfile", url, "replace", -1,
+                           "start=%.3f,force-media-title=%s,pause=no" % (start, mpv_quote(title)))
+            loaded = player.wait_for_load()
+        item["acr"] = acr
+        with self.lock:
+            self.item = item
+            self.last_sync = time.monotonic()
+            self.last_synced_ms = int(start * 1000)
+        self.write_playback()
+        state = self.player_state()
+        state["loading"] = not loaded
+        return state
+
+    def require_player(self):
+        with self.lock:
+            if not self.item:
+                raise BridgeError("not_playing", "Nothing is playing")
+        player = Mpv.connect()
+        if not player:
+            with self.lock:
+                self.item = None
+            self.write_playback()
+            raise BridgeError("not_playing", "The player has closed")
+        return player
+
+    def pause(self, paused):
+        with self.require_player() as player:
+            player.set("pause", bool(paused))
+        if paused:
+            self.sync_position(force=True)
+        return self.player_state()
+
+    def seek(self, args):
+        if args.get("position") is None and args.get("seconds") is None:
+            raise BridgeError("bad_request", "A position in seconds is required")
+        target = max(0.0, as_float(args.get("position", args.get("seconds"))))
+        with self.require_player() as player:
+            duration = as_float(player.get("duration"))
+            if duration:
+                target = min(target, max(0.0, duration - 1))
+            player.command("seek", target, "absolute")
+        self.sync_position(force=True, position=target)
+        return self.player_state()
+
+    def set_volume(self, args):
+        volume = clamp_volume(args.get("volume", args.get("value")))
+        with self.lock:
+            self.volume = volume
+        with contextlib.suppress(BridgeError):
+            with self.require_player() as player:
+                player.set("volume", volume)
+        return self.player_state()
+
+    def set_speed(self, args):
+        speed = clamp_speed(args.get("speed", args.get("value")))
+        with self.lock:
+            self.speed = speed
+        with contextlib.suppress(BridgeError):
+            with self.require_player() as player:
+                player.set("speed", speed)
+        return self.player_state()
+
+    def stop(self):
+        if self.item:
+            self.sync_position(force=True)
+        quit_mpv()
+        with self.lock:
+            self.item = None
+            self.last_synced_ms = None
+        self.write_playback()
+        return self.player_state()
+
+    # -- position sync
+
+    def sync_position(self, force=False, position=None):
+        """Write the listening position back to Audible; never raises."""
+        with self.lock:
+            item = dict(self.item) if self.item else None
+            auth = self.auth
+        if not item or auth is None or not item.get("acr"):
+            return
+        if position is None:
+            player = Mpv.connect(timeout=1.0)
+            if not player:
+                return
+            with player:
+                snap = player.snapshot()
+            if snap.get("idle-active"):
+                return
+            position = as_float(snap.get("time-pos"))
+            if snap.get("eof-reached"):
+                position = as_float(snap.get("duration"), position)
+        ms = int(position * 1000)
+        if not force and self.last_synced_ms is not None and abs(ms - self.last_synced_ms) < 1000:
+            return
+        try:
+            self.call("put", "1.0/lastpositions/%s" % item["asin"],
+                      body={"acr": item["acr"], "asin": item["asin"], "position_ms": ms})
+        except Exception as err:
+            log("could not save the listening position:", translate(err).message)
+            return
+        with self.lock:
+            self.last_synced_ms = ms
+            for book in self.library:
+                if book["asin"] == item["asin"]:
+                    book["last_position_sec"] = round(ms / 1000, 1)
+                    if book["status"] == "not-started":
+                        book["status"] = "in-progress"
+
+    def sync_loop(self, stop):
+        while not stop.wait(1.0):
+            with self.lock:
+                due = self.item is not None and time.monotonic() - self.last_sync >= SYNC_EVERY
+            if not due:
+                continue
+            with self.lock:
+                self.last_sync = time.monotonic()
+            try:
+                if not Mpv.connect(timeout=0.5):
+                    with self.lock:
+                        self.item = None
+                    self.write_playback()
+                    continue
+                self.sync_position()
+            except Exception as err:  # the loop must outlive any one failure
+                log("position sync failed:", err)
+
+    # -- answers
+
+    def account(self):
+        with self.lock:
+            return {"authenticated": self.auth is not None, "email": self.email}
+
+    def hello(self):
+        data = {"name": NAME, "version": VERSION, "protocol": PROTOCOL, "implemented": True,
+                "plugin_id": PLUGIN_ID, "features": list(FEATURES), "pid": os.getpid(),
+                "available": audible is not None}
+        data.update(self.account())
+        if audible is None:
+            data["error"] = AUDIBLE_ERROR
+        return data
+
+    def status(self):
+        data = self.account()
+        data["player"] = self.player_state()
+        with self.lock:
+            data["library"] = {"count": len(self.library), "loaded": self.library_loaded}
+        data["available"] = audible is not None
+        if audible is None:
+            data["error"] = AUDIBLE_ERROR
+        return data
+
+    def handle(self, op, args):
+        if op == "hello":
+            return self.hello()
+        if op == "status":
+            return self.status()
+        if op == "player":
+            return self.player_state()
+        if op == "library":
+            return self.get_library(args)
+        if op == "pause":
+            return self.pause(True)
+        if op == "resume":
+            return self.pause(False)
+        if op == "seek":
+            return self.seek(args)
+        if op == "volume":
+            return self.set_volume(args)
+        if op == "speed":
+            return self.set_speed(args)
+        long_ops = {"login": lambda: self.login(args), "logout": self.logout,
+                    "play": lambda: self.play(args), "stop": self.stop}
+        if op in long_ops:
+            if not self.op_lock.acquire(timeout=60):
+                raise BridgeError("busy", "Another sign-in or playback change is still running")
+            try:
+                return long_ops[op]()
+            finally:
+                self.op_lock.release()
+        raise BridgeError("unknown_op", "Unknown op %r" % op)
+
+
+BRIDGE = None
+
+
+def reply_for(request):
+    op = str(request.get("op") or request.get("action") or "")
+    out = {"id": request.get("id"), "type": op}
+    args = request.get("args")
+    if not isinstance(args, dict):
+        args = {}
+    try:
+        out.update({"ok": True, "data": BRIDGE.handle(op, args)})
+    except Exception as err:
+        failure = translate(err)
+        if failure.code == "internal":
+            log("%s failed:" % (op or "request"), failure.message)
+        out.update({"ok": False, "code": failure.code, "error": failure.message})
+    return out
+
+
+# -------------------------------------------------------------------- serve
+
+def default_socket_path():
+    return runtime_path(SOCKET_NAME)
+
+
+def check_dir(directory):
+    """The socket's directory must be a real 0700 directory of yours."""
+    st = os.lstat(directory)
+    if not stat.S_ISDIR(st.st_mode) or st.st_uid != os.geteuid():
+        raise SystemExit("audible-bridge: %s is not a directory of yours" % directory)
+    if st.st_mode & 0o077:
+        os.chmod(directory, 0o700)
+
+
+def serve_client(conn, clients, lock, stop):
+    buf = b""
+    try:
+        while not stop.is_set():
+            try:
+                chunk = conn.recv(65536)
+            except socket.timeout:
+                continue
+            if not chunk:
+                break
+            buf += chunk
+            while b"\n" in buf:
+                raw, buf = buf.split(b"\n", 1)
+                if not raw.strip():
+                    continue
+                try:
+                    request = json.loads(raw.decode("utf-8"))
+                except (UnicodeDecodeError, ValueError):
+                    continue
+                if isinstance(request, dict):
+                    conn.sendall((json.dumps(reply_for(request)) + "\n").encode("utf-8"))
+            if len(buf) > MAX_LINE:
+                break
+    except OSError:
+        pass
+    finally:
+        with lock:
+            clients.discard(conn)
+        with contextlib.suppress(OSError):
+            conn.close()
+
+
+def serve(path, lifeline):
+    global BRIDGE
+    if not path.startswith("/") or os.path.normpath(path) != path:
+        raise SystemExit("audible-bridge: not a clean absolute socket path: %r" % path)
+    check_dir(os.path.dirname(path))
+    with contextlib.suppress(FileNotFoundError):
+        st = os.lstat(path)
+        if not stat.S_ISSOCK(st.st_mode) or st.st_uid != os.geteuid():
+            raise SystemExit("audible-bridge: %s exists and is not a socket of yours" % path)
+        os.unlink(path)
+    BRIDGE = Bridge()
+    srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    old = os.umask(0o177)
+    try:
+        srv.bind(path)
+    finally:
+        os.umask(old)
+    os.chmod(path, 0o600)
+    inode = os.lstat(path).st_ino
+    srv.listen(4)
+    srv.settimeout(0.5)
+    stop = threading.Event()
+    for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(sig, lambda *_: stop.set())
+    if lifeline:
+        def watch():
+            with contextlib.suppress(OSError, ValueError):
+                while sys.stdin.buffer.read(4096):
+                    pass
+            stop.set()
+        threading.Thread(target=watch, daemon=True).start()
+    threading.Thread(target=BRIDGE.sync_loop, args=(stop,), daemon=True).start()
+    clients, lock = set(), threading.Lock()
+    log("ready on", path, "" if audible else "(audible package missing)")
+    try:
+        while not stop.is_set():
+            try:
+                conn, _ = srv.accept()
+            except socket.timeout:
+                continue
+            with lock:
+                if len(clients) >= MAX_CLIENTS:
+                    conn.close()
+                    continue
+                clients.add(conn)
+            conn.settimeout(1.0)
+            threading.Thread(target=serve_client, args=(conn, clients, lock, stop), daemon=True).start()
+    finally:
+        srv.close()
+        with contextlib.suppress(OSError):
+            if os.lstat(path).st_ino == inode:
+                os.unlink(path)
+        # mpv keeps playing; leave Audible with the latest position.
+        with contextlib.suppress(Exception):
+            BRIDGE.sync_position(force=True)
+    return 0
+
+
+def main(argv):
+    global BRIDGE
+    parser = argparse.ArgumentParser(prog="audible-bridge", description=__doc__.split("\n\n")[0])
+    sub = parser.add_subparsers(dest="command", required=True)
+    p = sub.add_parser("serve")
+    p.add_argument("--socket", default="")
+    p.add_argument("--lifeline", action="store_true")
+    sub.add_parser("status")
+    args = parser.parse_args(argv)
+    if args.command == "status":
+        BRIDGE = Bridge()
+        print(json.dumps({"ok": True, "data": BRIDGE.status()}))
+        return 0
+    return serve(args.socket or default_socket_path(), args.lifeline)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

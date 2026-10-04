@@ -83,7 +83,7 @@ class BarCoverCentred(unittest.TestCase):
     def setUpClass(cls):
         if not os.access(QML, os.X_OK):
             raise unittest.SkipTest("Qt's qml tool is missing")
-        cls.tmp = tempfile.mkdtemp(prefix="solfa-render.")
+        cls.tmp = tempfile.mkdtemp(prefix="vibe-render.")
         # The scene imports ../../views: rebuild that layout around a copy.
         root = os.path.dirname(HERE)
         os.makedirs(os.path.join(cls.tmp, "tests", "qml"))

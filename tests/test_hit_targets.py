@@ -53,7 +53,7 @@ def render(workdir, scale="1", extra_env=None):
 class HitTargets(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.workdir = tempfile.mkdtemp(prefix="solfa-hit-")
+        cls.workdir = tempfile.mkdtemp(prefix="vibe-hit-")
         found = render(cls.workdir)
         cls.geom, cls.clicks = found["GEOM"], found["CLICKS"]
 
@@ -127,7 +127,7 @@ class AdSkipButton(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.workdir = tempfile.mkdtemp(prefix="solfa-hit-ad-")
+        cls.workdir = tempfile.mkdtemp(prefix="vibe-hit-ad-")
         found = render(cls.workdir, extra_env={"SOLFA_SCENE_AD": "1"})
         cls.geom, cls.clicks = found["GEOM"], found["CLICKS"]
 
@@ -174,7 +174,7 @@ class AdSkipButtonWithoutASkipButton(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.workdir = tempfile.mkdtemp(prefix="solfa-hit-ad-unskip-")
+        cls.workdir = tempfile.mkdtemp(prefix="vibe-hit-ad-unskip-")
         found = render(cls.workdir, extra_env={"SOLFA_SCENE_AD": "1", "SOLFA_SCENE_AD_UNSKIPPABLE": "1"})
         cls.geom, cls.clicks = found["GEOM"], found["CLICKS"]
 

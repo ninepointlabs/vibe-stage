@@ -105,7 +105,7 @@ ShellRoot {
     Item {
       id: stage
       anchors.fill: parent
-      SolfaPanel {
+      VibeStagePanel {
         id: panel
         svc: fakeSvc
       }
@@ -162,7 +162,7 @@ ShellRoot {
               panel.onKey({ key: Qt.Key_Escape, text: "", modifiers: 0, accepted: false })
               win.after(function () {
                 var backState = { hero: win.shown("panelHero"), tabs: win.shown("panelTabs"), settings: win.shown("settingsView") }
-                // Solfa turned off: only the way back on is shown.
+                // YouTube Music turned off: only the way back on is shown.
                 fakeSvc.hasTrack = false; fakeSvc.isPlaying = false; fakeSvc.ready = false
                 fakeSvc.engine = { status: "stopped", error: "", signedIn: true, host: "", wantRunning: false }
                 fakeSvc.closed = true; fakeSvc.engineLine = Model.engineLine(fakeSvc.engine, fakeSvc.account)

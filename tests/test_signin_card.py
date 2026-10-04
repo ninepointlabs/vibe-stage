@@ -52,7 +52,7 @@ def render(workdir):
 class SignInCard(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.workdir = tempfile.mkdtemp(prefix="solfa-signin-card-")
+        cls.workdir = tempfile.mkdtemp(prefix="vibe-signin-card-")
         cls.state, cls.log = render(cls.workdir)
 
     @classmethod

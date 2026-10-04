@@ -104,10 +104,10 @@ class FakeHyprEvents:
 
 class BridgeTest(unittest.TestCase):
     def setUp(self):
-        self.tmp = pathlib.Path(tempfile.mkdtemp(prefix="solfa-test-"))
+        self.tmp = pathlib.Path(tempfile.mkdtemp(prefix="vibe-test-"))
         # unix socket paths must stay short: use the runtime dir
         base = pathlib.Path(os.environ.get("XDG_RUNTIME_DIR") or self.tmp)
-        self.rt = pathlib.Path(tempfile.mkdtemp(prefix="solfa-t", dir=base))
+        self.rt = pathlib.Path(tempfile.mkdtemp(prefix="vibe-t", dir=base))
         self.profile = self.tmp / "engine"
         self.hyprlog = self.tmp / "hyprctl.log"
         fake_ctl = self.tmp / "hyprctl"
@@ -511,7 +511,7 @@ class BridgeTest(unittest.TestCase):
         c.call("engine.stop")
         hello = c.call("hello")["data"]
         self.assertEqual(hello["engine"]["status"], "stopped")
-        self.assertEqual(hello["player"], {}, "no stale song on a closed Solfa")
+        self.assertEqual(hello["player"], {}, "no stale song on a closed YouTube Music")
 
     def test_a_small_page_is_left_alone(self):
         c = self.start(**self.RECYCLE)
@@ -1479,8 +1479,8 @@ class PureTest(unittest.TestCase):
     def load():
         import importlib.machinery
         import importlib.util
-        loader = importlib.machinery.SourceFileLoader("solfa_bridge", str(BRIDGE))
-        spec = importlib.util.spec_from_loader("solfa_bridge", loader)
+        loader = importlib.machinery.SourceFileLoader("vibe_stage_bridge", str(BRIDGE))
+        spec = importlib.util.spec_from_loader("vibe_stage_bridge", loader)
         mod = importlib.util.module_from_spec(spec)
         loader.exec_module(mod)
         return mod
@@ -1527,7 +1527,7 @@ class PureTest(unittest.TestCase):
         self.assertFalse(self.b.first_run_of_this_install())
 
     def test_first_run_of_this_install_and_mark_install(self):
-        tmp = pathlib.Path(tempfile.mkdtemp(prefix="solfa-install-"))
+        tmp = pathlib.Path(tempfile.mkdtemp(prefix="vibe-install-"))
         old = dict(os.environ)
         try:
             os.environ["SOLFA_TEST"] = ""   # falsy: exercise the real logic, not the test shortcut
@@ -1561,13 +1561,13 @@ class PureTest(unittest.TestCase):
             os.close(pidfd)
 
     def test_orphan_wipe_removes_only_a_path_shaped_like_plugin_id(self):
-        tmp = pathlib.Path(tempfile.mkdtemp(prefix="solfa-wipe-"))
+        tmp = pathlib.Path(tempfile.mkdtemp(prefix="vibe-wipe-"))
         try:
             data_home = tmp / "data"
-            data_dir = data_home / "io.github.sirallap.solfa"
+            data_dir = data_home / "ninepointlabs.vibe-stage"
             data_dir.mkdir(parents=True)
             (data_dir / "marker.txt").write_text("x")
-            runtime_dir = tmp / "runtime" / "io.github.sirallap.solfa"
+            runtime_dir = tmp / "runtime" / "ninepointlabs.vibe-stage"
             runtime_dir.mkdir(parents=True)
             # M2 added CACHE_DIR/STATE_DIR and the old id's cache/runtime dirs
             # to the wipe list: isolate every one of them, or this test would
@@ -1577,7 +1577,7 @@ class PureTest(unittest.TestCase):
                 "XDG_DATA_HOME": str(data_home), "SOLFA_RUNTIME_DIR": str(runtime_dir),
                 "XDG_CACHE_HOME": str(tmp / "cache"), "XDG_STATE_HOME": str(tmp / "state"),
             })
-            self.assertTrue(str(mod.RUNTIME_DIR).endswith("/io.github.sirallap.solfa"))
+            self.assertTrue(str(mod.RUNTIME_DIR).endswith("/ninepointlabs.vibe-stage"))
             mod.wipe_solfa_data()
             self.assertFalse(data_dir.exists())
             self.assertFalse(runtime_dir.exists())
@@ -1585,7 +1585,7 @@ class PureTest(unittest.TestCase):
             shutil.rmtree(tmp, ignore_errors=True)
 
     def test_orphan_wipe_refuses_a_path_not_shaped_like_plugin_id(self):
-        tmp = pathlib.Path(tempfile.mkdtemp(prefix="solfa-wipe-"))
+        tmp = pathlib.Path(tempfile.mkdtemp(prefix="vibe-wipe-"))
         try:
             runtime_dir = tmp / "runtime-not-shaped"
             runtime_dir.mkdir(parents=True)
@@ -1595,29 +1595,29 @@ class PureTest(unittest.TestCase):
                 "XDG_CACHE_HOME": str(tmp / "cache"), "XDG_STATE_HOME": str(tmp / "state"),
             })
             mod.wipe_solfa_data()
-            self.assertTrue(runtime_dir.exists(), "refused: does not end in /io.github.sirallap.solfa")
+            self.assertTrue(runtime_dir.exists(), "refused: does not end in /ninepointlabs.vibe-stage")
             self.assertTrue((runtime_dir / "marker.txt").exists())
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
 
     def test_orphan_wipe_also_removes_cache_state_and_old_id_leftovers_M2(self):
-        tmp = pathlib.Path(tempfile.mkdtemp(prefix="solfa-wipe-"))
+        tmp = pathlib.Path(tempfile.mkdtemp(prefix="vibe-wipe-"))
         try:
             data_home = tmp / "data"
-            data_dir = data_home / "io.github.sirallap.solfa"
+            data_dir = data_home / "ninepointlabs.vibe-stage"
             data_dir.mkdir(parents=True)
             cache_home = tmp / "cache"
-            cache_dir = cache_home / "io.github.sirallap.solfa"
+            cache_dir = cache_home / "ninepointlabs.vibe-stage"
             cache_dir.mkdir(parents=True)
             (cache_dir / "cover.jpg").write_text("x")
             state_home = tmp / "state"
-            state_dir = state_home / "io.github.sirallap.solfa"
+            state_dir = state_home / "ninepointlabs.vibe-stage"
             state_dir.mkdir(parents=True)
-            runtime_dir = tmp / "runtime" / "io.github.sirallap.solfa"
+            runtime_dir = tmp / "runtime" / "ninepointlabs.vibe-stage"
             runtime_dir.mkdir(parents=True)
-            old_cache_dir = cache_home / "serallap.solfa"
+            old_cache_dir = cache_home / "ninepointlabs.vibe-stage"
             old_cache_dir.mkdir(parents=True)
-            old_runtime_dir = tmp / "runtime" / "serallap.solfa"
+            old_runtime_dir = tmp / "runtime" / "ninepointlabs.vibe-stage"
             old_runtime_dir.mkdir(parents=True)
             mod = self.load_with_env({
                 "XDG_DATA_HOME": str(data_home), "XDG_CACHE_HOME": str(cache_home),
@@ -1655,10 +1655,10 @@ class PureTest(unittest.TestCase):
         # Both the old and new plugin id's data dirs would exist for an
         # upgrader with Solfa already running: the old engine's SingletonLock
         # is checked pid-alive, closed, and only then is the dir renamed.
-        tmp = pathlib.Path(tempfile.mkdtemp(prefix="solfa-migrate-"))
+        tmp = pathlib.Path(tempfile.mkdtemp(prefix="vibe-migrate-"))
         try:
             data_home = tmp / "data"
-            old_dir = data_home / "serallap.solfa"
+            old_dir = data_home / "ninepointlabs.vibe-stage"
             old_engine_dir = old_dir / "engine"
             old_engine_dir.mkdir(parents=True)
             (old_dir / "shell.json").write_text("{}")  # partial state alongside the profile
@@ -1668,7 +1668,7 @@ class PureTest(unittest.TestCase):
                                                    "--user-data-dir=" + str(old_engine_dir)], dict(os.environ))
             try:
                 (old_engine_dir / "SingletonLock").symlink_to(f"{socket.gethostname()}-{pid}")
-                new_dir = data_home / "io.github.sirallap.solfa"
+                new_dir = data_home / "ninepointlabs.vibe-stage"
                 self.assertFalse(new_dir.exists())
 
                 mod = self.load_with_env({"XDG_DATA_HOME": str(data_home)})
@@ -1749,11 +1749,11 @@ class PureTest(unittest.TestCase):
             "XDG_DATA_HOME": str(real_home / ".local" / "share"),
             "XDG_CACHE_HOME": str(real_home / ".cache"),
             "XDG_STATE_HOME": str(real_home / ".local" / "state"),
-            "SOLFA_RUNTIME_DIR": str(pathlib.Path(f"/run/user/{os.getuid()}") / "io.github.sirallap.solfa"),
+            "SOLFA_RUNTIME_DIR": str(pathlib.Path(f"/run/user/{os.getuid()}") / "ninepointlabs.vibe-stage"),
             "SOLFA_TEST": "1",
         })
-        real_dirs = [real_home / ".local" / "share" / "io.github.sirallap.solfa",
-                     real_home / ".local" / "state" / "io.github.sirallap.solfa"]
+        real_dirs = [real_home / ".local" / "share" / "ninepointlabs.vibe-stage",
+                     real_home / ".local" / "state" / "ninepointlabs.vibe-stage"]
         existed_before = [d for d in real_dirs if d.exists()]
         with self.delete_tripwire():
             mod.wipe_solfa_data()  # must not raise: the guard refuses before any delete
@@ -1768,14 +1768,14 @@ class PureTest(unittest.TestCase):
         # the spelling a normalised-path check alone would have let through.
         real_home = pathlib.Path(pwd.getpwuid(os.getuid()).pw_dir)
         run_user = pathlib.Path(f"/run/user/{os.getuid()}")
-        pid = "io.github.sirallap.solfa"
+        pid = "ninepointlabs.vibe-stage"
         kinds = {  # env var -> the real parent the bridge appends the plugin id to
             "XDG_DATA_HOME": real_home / ".local" / "share",
             "XDG_CACHE_HOME": real_home / ".cache",
             "XDG_STATE_HOME": real_home / ".local" / "state",
             "SOLFA_RUNTIME_DIR": run_user,
         }
-        tmp = pathlib.Path(tempfile.mkdtemp(prefix="solfa-guard-"))
+        tmp = pathlib.Path(tempfile.mkdtemp(prefix="vibe-guard-"))
         try:
             for var, real_parent in kinds.items():
                 with self.subTest(var=var):
@@ -1808,7 +1808,7 @@ class PureTest(unittest.TestCase):
         # by scanning /proc for the exact cmdline argument, never adopting
         # one of its --type= children.
         mod = self.load()
-        tmp = pathlib.Path(tempfile.mkdtemp(prefix="solfa-procscan-"))
+        tmp = pathlib.Path(tempfile.mkdtemp(prefix="vibe-procscan-"))
         try:
             profile = tmp / "engine"  # never created: proves no SingletonLock is needed
             pid = os.posix_spawn(sys.executable,
@@ -1837,7 +1837,7 @@ class PureTest(unittest.TestCase):
         # a --type= argument: the proc scan must skip it, never mistake it
         # for the main browser process.
         mod = self.load()
-        tmp = pathlib.Path(tempfile.mkdtemp(prefix="solfa-procscan-"))
+        tmp = pathlib.Path(tempfile.mkdtemp(prefix="vibe-procscan-"))
         try:
             profile = tmp / "engine"
             pid = os.posix_spawn(sys.executable,
@@ -1902,7 +1902,7 @@ class PureTest(unittest.TestCase):
             os.environ.update(env)
 
     def test_only_an_engine_profile_may_be_erased(self):
-        tmp = pathlib.Path(tempfile.mkdtemp(prefix="solfa-erase-"))
+        tmp = pathlib.Path(tempfile.mkdtemp(prefix="vibe-erase-"))
         try:
             plain = tmp / "plain"
             plain.mkdir()
@@ -1931,7 +1931,7 @@ class PureTest(unittest.TestCase):
             shutil.rmtree(tmp, ignore_errors=True)
 
     def test_profile_in_split_and_joined_command_lines(self):
-        p = "/home/someone/.local/share/io.github.sirallap.solfa/engine"
+        p = "/home/someone/.local/share/ninepointlabs.vibe-stage/engine"
         split = b"/usr/lib/chromium/chromium\0--user-data-dir=" + p.encode() + b"\0--app=https://music.youtube.com/\0"
         joined = b"/usr/lib/chromium/chromium --ozone-platform=wayland --user-data-dir=" + p.encode() + b" --profile-directory=Solfa\0"
         self.assertTrue(self.b.uses_profile(split, p))
@@ -1941,7 +1941,7 @@ class PureTest(unittest.TestCase):
 
     def test_sign_in_cookie_is_found_by_name_and_time_only(self):
         import sqlite3
-        d = pathlib.Path(tempfile.mkdtemp(prefix="solfa-ck-"))
+        d = pathlib.Path(tempfile.mkdtemp(prefix="vibe-ck-"))
         try:
             self.assertFalse(self.b.signed_in_since(d, 0))
             (d / "Network").mkdir()
@@ -2134,7 +2134,7 @@ class ImportPureTest(unittest.TestCase):
         self.assertEqual(error, "browser-anywhere is not installed (/no/such/browser-anywhere)")
 
     def test_installed_browsers_are_only_the_executable_candidates(self):
-        tmp = pathlib.Path(tempfile.mkdtemp(prefix="solfa-browsers-"))
+        tmp = pathlib.Path(tempfile.mkdtemp(prefix="vibe-browsers-"))
         try:
             there, missing, plain = tmp / "chromium", tmp / "brave", tmp / "vivaldi-stable"
             there.write_text("#!/bin/sh\n")
@@ -2194,7 +2194,7 @@ class BrowserChoiceTest(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.tmp = pathlib.Path(tempfile.mkdtemp(prefix="solfa-choice-"))
+        cls.tmp = pathlib.Path(tempfile.mkdtemp(prefix="vibe-choice-"))
         cls.profile = cls.tmp / "engine"
         cls.b = PureTest.load_with_env({"SOLFA_PROFILE_DIR": str(cls.profile)})
 
@@ -2387,8 +2387,8 @@ class SpawnFdTest(unittest.TestCase):
 
     CHILD = r"""
 import importlib.machinery, importlib.util, os, sys
-loader = importlib.machinery.SourceFileLoader("solfa_bridge", sys.argv[1])
-spec = importlib.util.spec_from_loader("solfa_bridge", loader)
+loader = importlib.machinery.SourceFileLoader("vibe_stage_bridge", sys.argv[1])
+spec = importlib.util.spec_from_loader("vibe_stage_bridge", loader)
 mod = importlib.util.module_from_spec(spec)
 loader.exec_module(mod)
 probe = [sys.executable, "-c",

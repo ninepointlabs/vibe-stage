@@ -5,10 +5,22 @@ import Quickshell.Hyprland
 import "lib/Model.js" as Model
 import "lib"
 
-// Service.qml — one per shell. It runs the bridge (bin/solfa-bridge), keeps
-// the one copy of the state that every bar widget and the panel draw from,
-// and holds the actions they call. Everything about the hidden engine and
-// its window lives in the bridge; this side is the UI's model.
+// Service.qml — one per shell. It keeps the one copy of the state that every
+// bar widget and the panel draw from, and holds the actions they call, for
+// all three sources:
+//
+//   ytmusic   YouTube Music, through bin/vibe-stage-bridge (Solfa's engine,
+//             unchanged): everything in this file that is not marked as a
+//             source below.
+//   podcasts  Pocket Casts, through bin/pocketcasts-bridge (lib/PodcastsSource.qml,
+//             here as `pc`).
+//   audible   Audible, through bin/audible-bridge (lib/AudibleSource.qml,
+//             here as `audible`).
+//
+// `activeSource` is the one the user picked (the panel's source tabs, IPC
+// setSource); `controlSource` is the one the bar and the media keys act on:
+// the active one, unless it is idle while another one plays. Starting one
+// source pauses the others, so only one ever plays.
 Item {
   id: root
 
@@ -16,10 +28,9 @@ Item {
   // through it) and this widget's entry in shell.json.
   property var shell: null
   property var settings: ({})
-  function settingOf(snapshot, name, fallback) {
-    var v = snapshot ? snapshot[name] : undefined
-    return v === undefined || v === null ? fallback : v
-  }
+  // YouTube Music's own settings are stored as "ytmusic.<name>" and still
+  // asked for by their bare name (Model.settingKey/settingValue).
+  function settingOf(snapshot, name, fallback) { return Model.settingValue(snapshot, name, fallback) }
   function setting(name, fallback) { return root.settingOf(root.settings, name, fallback) }
 
   // Settings store: one write path for every setting, real or bar-widget.
@@ -27,7 +38,7 @@ Item {
   // settings UI (built from manifest.json's schema) edits the same values.
   function saveSetting(key, value) {
     var change = {}
-    change[key] = value
+    change[Model.settingKey(key)] = value
     root.writeSettings(change)
   }
   // Defaults over the current entry (any other key in it is kept).
@@ -65,7 +76,7 @@ Item {
   }
   Timer { id: pendingSettingsTimer; interval: 5000; onTriggered: root.pendingSettings = ({}) }
 
-  readonly property string pluginId: "io.github.sirallap.solfa"
+  readonly property string pluginId: "ninepointlabs.vibe-stage"
   readonly property string pluginDir: decodeURIComponent(Qt.resolvedUrl(".").toString().replace(/^file:\/\//, "")).replace(/\/$/, "")
   readonly property string runtimeDir: (Quickshell.env("XDG_RUNTIME_DIR") || ("/run/user/" + Quickshell.env("UID"))) + "/" + pluginId
   readonly property string socketPath: runtimeDir + "/bridge.sock"
@@ -187,7 +198,14 @@ Item {
   // "changes" when this Service is created (its empty default is
   // evaluated), and the bridge would be started, or asked to quit, under
   // defaults nobody chose.
-  onSettingsChanged: { if (root.settingsLoaded) root.maybeRestartBridge(); root.sendEq(); root.sendStart() }
+  onSettingsChanged: {
+    if (root.settingsLoaded) {
+      root.applyDefaultSource()
+      root.maybeRestartBridge()
+    }
+    root.sendEq()
+    root.sendStart()
+  }
   onReadyChanged: if (root.ready) root.sendEq()
 
   // The variables for a bridge, all read from `snapshot` (the settings as
@@ -232,11 +250,11 @@ Item {
   function startBridgeUnit(vars) {
     // L1: systemd-run (261+) expands ${VAR} in command arguments by default;
     // a pluginDir containing "$" would otherwise be rewritten.
-    var argv = ["/usr/bin/systemd-run", "--user", "--unit=io.github.sirallap.solfa-bridge", "--collect", "--quiet",
+    var argv = ["/usr/bin/systemd-run", "--user", "--unit=ninepointlabs.vibe-stage-bridge", "--collect", "--quiet",
       "--expand-environment=no"]
     for (var k in vars) argv.push("--setenv=" + k + "=" + vars[k])
     argv.push("--")
-    argv.push("/usr/bin/python3", root.pluginDir + "/bin/solfa-bridge")
+    argv.push("/usr/bin/python3", root.pluginDir + "/bin/vibe-stage-bridge")
     // Fire and forget: "unit already exists" (a bridge is already running)
     // is not an error here, it is the common case — the socket below is
     // what actually says whether one answers.
@@ -244,6 +262,8 @@ Item {
   }
 
   function startBridge() {
+    // The other sources start at the same moment: settings in, or 2 s on.
+    root.sourcesStarted = true
     if (root.bridgeUnitStarted) return
     root.bridgeUnitStarted = true
     root.restartingTo = ""
@@ -379,7 +399,7 @@ Item {
     // closed it stays unsaid (report() covers the user's own actions).
     if (!reply.ok && reply.error && !entry.cb && root.panelOpen) root.lastError = Model.errorText(reply.error)
     if (entry.cb) {
-      try { entry.cb(reply) } catch (e) { console.warn("[solfa] callback: " + e) }
+      try { entry.cb(reply) } catch (e) { console.warn("[vibe-stage] callback: " + e) }
     }
   }
 
@@ -478,7 +498,7 @@ Item {
   function report(code) {
     var text = Model.errorText(code)
     if (root.panelOpen) { root.lastError = text; return }
-    Quickshell.execDetached(["/usr/bin/notify-send", "--app-name=Solfa", "--urgency=low", "--expire-time=4000", "--", "Solfa", text])
+    Quickshell.execDetached(["/usr/bin/notify-send", "--app-name=Vibe Stage", "--urgency=low", "--expire-time=4000", "--", "Vibe Stage", text])
   }
   function reportFailure(r) { if (r && !r.ok && r.error !== "bridge-down") root.report(r.error) }
 
@@ -771,7 +791,7 @@ Item {
       if (vid !== root.videoId) return
       var icon = r.ok && r.data ? r.data.path : "audio-x-generic"
       var esc = function (s) { return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;") }
-      var argv = ["/usr/bin/notify-send", "--app-name=Solfa", "--icon=" + icon, "--print-id", "--urgency=low",
+      var argv = ["/usr/bin/notify-send", "--app-name=Vibe Stage", "--icon=" + icon, "--print-id", "--urgency=low",
         "--hint=string:x-canonical-private-synchronous:" + root.pluginId]
       if (root.toastId > 0) argv.push("--replace-id=" + root.toastId)
       argv.push("--", esc(text.summary), esc(text.body))
@@ -792,7 +812,7 @@ Item {
 
   // ------------------------------------------------------------------ global keys
 
-  // Solfa's own shortcuts, registered at runtime and only where the key is
+  // Vibe Stage's own shortcuts, registered at runtime and only where the key is
   // free; a Hyprland config reload wipes them, so they come back after one.
   // M3: the last bare program name run through Hyprland's exec (a PATH
   // lookup, sh -c). Resolved once, with an absolute fallback so a session
@@ -807,7 +827,7 @@ Item {
   onWantKeysChanged: root.syncKeys()
 
   // The plugin can be removed or disabled without warning (Omarchy just
-  // destroys this Item): unbind Solfa's own keys so they are not left
+  // destroys this Item): unbind Vibe Stage's own keys so they are not left
   // dangling in Hyprland's config. This is the only cleanup done here — the
   // engine and the bridge itself outlive a shell restart on purpose; the
   // bridge's own orphan lease is what closes them once nothing reconnects.
@@ -866,18 +886,163 @@ Item {
 
   // ------------------------------------------------------------------ IPC
 
+  // Media keys and scripts act on the source the bar shows (controlSource).
   IpcHandler {
-    target: "io.github.sirallap.solfa"
+    target: "ninepointlabs.vibe-stage"
 
     function toggle(): void { if (root.shell) root.shell.toggle(root.pluginId, "{}") }
     function open(): void { if (root.shell) root.shell.summon(root.pluginId, "{}") }
     function close(): void { if (root.shell) root.shell.hide(root.pluginId) }
-    function playPause(): void { root.togglePlaying() }
-    function next(): void { root.next() }
-    function previous(): void { root.previous() }
-    function like(): void { root.toggleLike() }
-    function volumeUp(): void { root.nudgeVolume(1) }
-    function volumeDown(): void { root.nudgeVolume(-1) }
-    function status(): string { return root.hasTrack ? (root.title + " — " + root.artist) : root.engineLine }
+    function playPause(): void { root.mediaPlayPause() }
+    function next(): void { root.mediaNext() }
+    function previous(): void { root.mediaPrevious() }
+    function skipBack(): void { root.mediaSkip(-1) }
+    function skipForward(): void { root.mediaSkip(1) }
+    function like(): void { if (root.controlSource === "ytmusic") root.toggleLike() }
+    function volumeUp(): void { root.mediaNudgeVolume(1) }
+    function volumeDown(): void { root.mediaNudgeVolume(-1) }
+    function setSource(source: string): string { return root.setSource(source) ? "ok" : "unknown source" }
+    function source(): string { return root.activeSource }
+    function status(): string {
+      var line = root.nowHasTrack ? (root.nowTitle + (root.nowSubtitle ? " — " + root.nowSubtitle : "")) : (root.nowHealth || "Nothing playing")
+      return Model.sourceLabel(root.controlSource) + ": " + line
+    }
+  }
+
+  // ------------------------------------------------------------------ sources
+
+  // Set once the YouTube Music bridge is asked for (settings in, or 2 s on):
+  // the Podcasts helper starts then too, never on defaults nobody chose.
+  property bool sourcesStarted: false
+
+  property string activeSource: "ytmusic"
+  // defaultSource is read once, when the settings first arrive; after that
+  // the user's own choice (tabs, IPC) stands until the next shell start.
+  property bool sourceChosen: false
+  function applyDefaultSource() {
+    if (root.sourceChosen) return
+    root.sourceChosen = true
+    root.activeSource = Model.sourceOr(root.setting("defaultSource", "ytmusic"), "ytmusic")
+  }
+
+  PodcastsSource {
+    id: pcSource
+    settings: root.settings
+    pluginDir: root.pluginDir
+    runtimeDir: root.runtimeDir
+    panelOpen: root.panelOpen
+    wanted: root.sourcesStarted
+    onIsPlayingChanged: if (pcSource.isPlaying) root.pauseOthers("podcasts")
+  }
+  readonly property var pc: pcSource
+
+  // Audiobooks: its bridge runs on the interpreter the Podcasts source's
+  // probe found (one probe for both).
+  AudibleSource {
+    id: audibleSource
+    settings: root.settings
+    pluginDir: root.pluginDir
+    runtimeDir: root.runtimeDir
+    python: pcSource.python
+    pythonError: pcSource.pythonError
+    panelOpen: root.panelOpen
+    wanted: root.sourcesStarted
+    onIsPlayingChanged: if (audibleSource.isPlaying) root.pauseOthers("audible")
+  }
+  readonly property var audible: audibleSource
+
+  onIsPlayingChanged: if (root.isPlaying) root.pauseOthers("ytmusic")
+
+  // Only one source plays: the one that just started pauses the rest.
+  function pauseOthers(source) {
+    if (source !== "ytmusic" && root.isPlaying) root.pause()
+    if (source !== "podcasts" && pcSource.isPlaying) pcSource.pause()
+    if (source !== "audible" && audibleSource.isPlaying) audibleSource.pause()
+  }
+
+  readonly property var sourcePlaying: ({ ytmusic: root.isPlaying, podcasts: pcSource.isPlaying, audible: audibleSource.isPlaying })
+  readonly property string controlSource: Model.controlSource(root.activeSource, root.sourcePlaying)
+
+  // Pick the source the panel shows and the bar acts on. Nothing is closed:
+  // what plays keeps playing until the new source plays something; the new
+  // source is woken (YouTube Music started if it was off, Pocket Casts
+  // asked for fresh state).
+  function setSource(source) {
+    if (!Model.isSource(source)) return false
+    root.sourceChosen = true
+    root.activeSource = source
+    if (source === "podcasts") pcSource.refreshIfStale()
+    else if (source === "audible") audibleSource.refreshIfStale()
+    return true
+  }
+  function cycleSource(dir) { return root.setSource(Model.cycleSource(root.activeSource, dir)) }
+
+  // What the bar shows, for controlSource. YouTube Music's own names
+  // (hasTrack, title, thumb...) are unchanged; these sit over all three.
+  function hasTrackOf(source) { return source === "podcasts" ? pcSource.playerActive : source === "audible" ? audibleSource.playerActive : root.hasTrack }
+  function playingOf(source) { return source === "podcasts" ? pcSource.isPlaying : source === "audible" ? audibleSource.isPlaying : root.isPlaying }
+  function healthOf(source) {
+    if (source === "podcasts") return pcSource.healthLine
+    if (source === "audible") return audibleSource.healthLine
+    return root.bridgeUp && !root.closed ? root.engineLine : (root.closed ? "YouTube Music is off" : root.engineLine)
+  }
+  readonly property bool nowHasTrack: root.hasTrackOf(root.controlSource)
+  readonly property bool nowPlaying: root.playingOf(root.controlSource)
+  readonly property string nowTitle: root.controlSource === "podcasts" ? pcSource.title : root.controlSource === "audible" ? audibleSource.title : root.title
+  readonly property string nowSubtitle: root.controlSource === "podcasts" ? pcSource.show : root.controlSource === "audible" ? audibleSource.author : root.artist
+  readonly property string nowArt: root.controlSource === "podcasts" ? pcSource.art : root.controlSource === "audible" ? audibleSource.art : root.thumb
+  readonly property real nowPosition: root.controlSource === "podcasts" ? pcSource.localPosition : root.controlSource === "audible" ? audibleSource.localPosition : root.position
+  readonly property real nowDuration: root.controlSource === "podcasts" ? pcSource.duration : root.controlSource === "audible" ? audibleSource.duration : root.duration
+  readonly property real nowProgress: root.nowDuration > 0 ? Math.max(0, Math.min(1, root.nowPosition / root.nowDuration)) : 0
+  readonly property int nowVolume: root.controlSource === "podcasts" ? pcSource.volume : root.controlSource === "audible" ? audibleSource.volume : root.volume
+  // Why the source the bar shows has nothing: its helper is down, it is
+  // signed out, it is off. "" when it is fine.
+  readonly property string nowHealth: root.healthOf(root.controlSource)
+
+  // The bar's and the media keys' actions, routed to controlSource.
+  function mediaPlayPause() {
+    var s = root.controlSource
+    if (s === "podcasts") return pcSource.playPause()
+    if (s === "audible") return audibleSource.playPause()
+    root.togglePlaying()
+    return true
+  }
+  function mediaNext() {
+    var s = root.controlSource
+    if (s === "podcasts") return pcSource.next()
+    if (s === "audible") return audibleSource.skipForward()
+    root.next()
+    return true
+  }
+  // Podcasts have no "previous episode", audiobooks no next or previous
+  // book: skip back (and forward) there.
+  function mediaPrevious() {
+    var s = root.controlSource
+    if (s === "podcasts") return pcSource.skipBack()
+    if (s === "audible") return audibleSource.skipBack()
+    root.previous()
+    return true
+  }
+  function mediaSkip(dir) {
+    var s = root.controlSource
+    if (s === "podcasts") return dir < 0 ? pcSource.skipBack() : pcSource.skipForward()
+    if (s === "audible") return dir < 0 ? audibleSource.skipBack() : audibleSource.skipForward()
+    root.seekBy(dir < 0 ? -10 : 10)
+    return true
+  }
+  // steps: one wheel notch or key press (5 % either way).
+  function mediaNudgeVolume(steps) {
+    var s = root.controlSource
+    if (s === "podcasts") { pcSource.nudgeVolume(steps * 5); return true }
+    if (s === "audible") { audibleSource.nudgeVolume(steps * 5); return true }
+    root.nudgeVolume(steps)
+    return true
+  }
+  function mediaSeekBy(seconds) {
+    var s = root.controlSource
+    if (s === "podcasts") return pcSource.skip(seconds)
+    if (s === "audible") return audibleSource.skip(seconds)
+    root.seekBy(seconds)
+    return true
   }
 }

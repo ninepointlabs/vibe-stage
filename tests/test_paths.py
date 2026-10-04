@@ -10,7 +10,7 @@ import re
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-PY_FILES = [ROOT / "bin" / "solfa", ROOT / "bin" / "solfa-bridge"]
+PY_FILES = [ROOT / "bin" / "vibe-stage", ROOT / "bin" / "vibe-stage-bridge"]
 QML_FILES = [ROOT / "Service.qml"] + sorted((ROOT / "views").glob("*.qml"))
 
 # A literal bare program name as the first element of the argv passed to a

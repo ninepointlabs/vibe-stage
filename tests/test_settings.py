@@ -54,7 +54,7 @@ def render(workdir):
 class SettingsKeyboard(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.workdir = tempfile.mkdtemp(prefix="solfa-settings-")
+        cls.workdir = tempfile.mkdtemp(prefix="vibe-settings-")
         cls.found = render(cls.workdir)
         cls.state, cls.clicks, cls.mouse = cls.found["STATE"], cls.found["CLICKS"], cls.found["MOUSE"]
 

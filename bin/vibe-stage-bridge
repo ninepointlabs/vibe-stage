@@ -1,5 +1,7 @@
 #!/usr/bin/python3
-"""solfa-bridge — keeps Solfa's hidden YouTube Music engine alive and serves the shell.
+"""vibe-stage-bridge — keeps Vibe Stage's hidden YouTube Music engine alive and serves the shell.
+
+Forked from Solfa's solfa-bridge (MIT, SirAllap); the engine itself is unchanged.
 
 The engine is a Chromium app window with its own profile. The bridge starts it
 (or finds it running), attaches over the Chrome DevTools protocol on
@@ -31,8 +33,11 @@ import time
 import urllib.parse
 import urllib.request
 
-PLUGIN_ID = "io.github.sirallap.solfa"
+PLUGIN_ID = "ninepointlabs.vibe-stage"
 OLD_PLUGIN_ID = "serallap.solfa"  # only for the one-time data-dir migration below
+# Solfa, the plugin this one was forked from: never migrated from or wiped
+# (it may still be installed next to this one), only fenced off in tests.
+SOLFA_PLUGIN_ID = "io.github.sirallap.solfa"
 
 
 def env_number(name, default, low, high):
@@ -195,7 +200,7 @@ def _real_forbidden_dirs():
     real_home = _real_home()
     uid = os.getuid()
     dirs = []
-    for plugin_id in (PLUGIN_ID, OLD_PLUGIN_ID):
+    for plugin_id in (PLUGIN_ID, OLD_PLUGIN_ID, SOLFA_PLUGIN_ID):
         dirs.append(real_home / ".local" / "share" / plugin_id)
         dirs.append(real_home / ".cache" / plugin_id)
         dirs.append(real_home / ".local" / "state" / plugin_id)
@@ -264,7 +269,7 @@ MAX_CLIENT_BACKLOG = 4 << 20
 
 
 def log(*parts):
-    print("solfa-bridge:", *parts, file=sys.stderr, flush=True)
+    print("vibe-stage-bridge:", *parts, file=sys.stderr, flush=True)
 
 
 # --------------------------------------------------------------------------- websocket
@@ -917,7 +922,7 @@ def erasable_profile(target):
     """Why `target` may not be deleted as the engine's profile, or "" if it may.
 
     An allowlist, not a denylist: the known layout
-    ($XDG_DATA_HOME/io.github.sirallap.solfa/engine), or a folder that really
+    ($XDG_DATA_HOME/ninepointlabs.vibe-stage/engine), or a folder that really
     is this engine's Chromium profile (its Local State file and our own profile
     directory, "Solfa", which no everyday browser profile has)."""
     if not str(target) or not target.is_absolute():

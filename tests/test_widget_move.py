@@ -25,7 +25,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 SHELL_DIR = os.path.join(os.environ.get("OMARCHY_PATH", "/usr/share/omarchy"), "shell")
 QS = shutil.which(os.environ.get("QS_TOOL", "qs"))
-PLUGIN_ID = "io.github.sirallap.solfa"
+PLUGIN_ID = "ninepointlabs.vibe-stage"
 VERSION = json.load(open(os.path.join(ROOT, "manifest.json")))["version"]
 
 # What the shell hands the widget: its shell.json entry, without the id.
@@ -148,10 +148,10 @@ def make_stubs(stubs, log, key_file):
 
 def run_scene(steps, key=KEY, version=VERSION, scene_ms=9000, bridge_delay=0.0):
     """Returns (bridge, stub_calls, log)."""
-    work = tempfile.mkdtemp(prefix="solfa-wm-")
+    work = tempfile.mkdtemp(prefix="vibe-wm-")
     # AF_UNIX paths are short (108 bytes): the runtime dir is a short one
     # under /tmp, never the (long) scratch dir.
-    runtime = tempfile.mkdtemp(prefix="solfa-r-", dir="/tmp")
+    runtime = tempfile.mkdtemp(prefix="vibe-r-", dir="/tmp")
     try:
         cfg = os.path.join(work, "scene")
         os.mkdir(cfg)

@@ -1,14 +1,14 @@
 #!/usr/bin/python3
-"""solfa — command line for Solfa (keybindings, scripts, debugging).
+"""vibe-stage — command line for Vibe Stage's YouTube Music engine (keybindings, scripts, debugging).
 
-    solfa toggle | open | close        the panel (through the shell)
-    solfa play-pause | next | prev     playback
-    solfa like                         like the current song (again: remove the like)
-    solfa volume +5 | -5 | 40          volume, relative or absolute
-    solfa status                       one line: engine, account, song
-    solfa quit                         close the engine (also when the bridge is gone)
-    solfa call OP [JSON]               any bridge operation, raw reply
-    solfa events                       follow the bridge's events (Ctrl+C to stop)
+    vibe-stage toggle | open | close        the panel (through the shell)
+    vibe-stage play-pause | next | prev     playback
+    vibe-stage like                         like the current song (again: remove the like)
+    vibe-stage volume +5 | -5 | 40          volume, relative or absolute
+    vibe-stage status                       one line: engine, account, song
+    vibe-stage quit                         close the engine (also when the bridge is gone)
+    vibe-stage call OP [JSON]               any bridge operation, raw reply
+    vibe-stage events                       follow the bridge's events (Ctrl+C to stop)
 """
 import json
 import os
@@ -20,7 +20,7 @@ import subprocess
 import sys
 import time
 
-PLUGIN_ID = "io.github.sirallap.solfa"
+PLUGIN_ID = "ninepointlabs.vibe-stage"
 
 # A minimal, explicit environment for every child process this CLI spawns: an
 # allow-list, never this process's own full environment. PATH is always fixed,
@@ -81,7 +81,7 @@ def quit_engine():
         if not engine_pid():
             return 0
         time.sleep(0.1)
-    print("solfa: the engine did not close", file=sys.stderr)
+    print("vibe-stage: the engine did not close", file=sys.stderr)
     return 1
 
 
@@ -95,7 +95,7 @@ class Bridge:
             self.sock.close()
             self.sock = None
             if exit_if_down:
-                sys.exit("solfa: the bridge is not running (is the plugin enabled?)")
+                sys.exit("vibe-stage: the bridge is not running (is the plugin enabled?)")
         self.buf = b""
         self.next_id = 0
 
@@ -116,7 +116,7 @@ class Bridge:
         for msg in self.lines():
             if msg.get("id") == rid:
                 return msg
-        sys.exit("solfa: the bridge closed the connection")
+        sys.exit("vibe-stage: the bridge closed the connection")
 
 
 QS = "/usr/bin/qs"
@@ -124,7 +124,7 @@ QS = "/usr/bin/qs"
 
 def shell_ipc(method):
     if not os.access(QS, os.X_OK):
-        print("solfa: " + QS + " not found", file=sys.stderr)
+        print("vibe-stage: " + QS + " not found", file=sys.stderr)
         return 1
     cmd = [QS, "ipc", "-p", os.environ.get("OMARCHY_PATH", "/usr/share/omarchy") + "/shell", "call", PLUGIN_ID, method]
     return subprocess.run(cmd, stdout=subprocess.DEVNULL, env=child_env()).returncode
@@ -133,7 +133,7 @@ def shell_ipc(method):
 def ok(reply):
     if not reply.get("ok"):
         error, message = reply.get("error", "error"), reply.get("message", "")
-        sys.exit("solfa: " + error + (": " + message if message and message != error else ""))
+        sys.exit("vibe-stage: " + error + (": " + message if message and message != error else ""))
     return reply.get("data")
 
 
@@ -156,7 +156,7 @@ def main(argv):
     elif cmd == "like":
         player = ok(b.call("state")).get("player") or {}
         if not player.get("videoId"):
-            sys.exit("solfa: nothing is playing")
+            sys.exit("vibe-stage: nothing is playing")
         status = "INDIFFERENT" if player.get("like") == "LIKE" else "LIKE"
         ok(b.call("like", {"videoId": player["videoId"], "status": status}))
     elif cmd == "volume" and rest:

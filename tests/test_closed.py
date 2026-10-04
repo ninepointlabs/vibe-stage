@@ -26,7 +26,7 @@ def render(workdir, scale="1"):
     os.mkdir(cfg)
     for name, target in (("Ui", os.path.join(SHELL_DIR, "Ui")), ("Commons", os.path.join(SHELL_DIR, "Commons")),
                          ("views", os.path.join(ROOT, "views")), ("lib", os.path.join(ROOT, "lib")),
-                         ("SolfaBar.qml", os.path.join(ROOT, "BarWidget.qml")), ("Panel.qml", os.path.join(ROOT, "Panel.qml")),
+                         ("VibeStageBar.qml", os.path.join(ROOT, "BarWidget.qml")), ("Panel.qml", os.path.join(ROOT, "Panel.qml")),
                          ("shell.qml", os.path.join(HERE, "qml", "ClosedScene.qml"))):
         os.symlink(target, os.path.join(cfg, name))
     out = os.environ.get("SOLFA_SCENE_OUT") or os.path.join(workdir, "scene.png")
@@ -50,7 +50,7 @@ def render(workdir, scale="1"):
 class Closed(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.workdir = tempfile.mkdtemp(prefix="solfa-closed-")
+        cls.workdir = tempfile.mkdtemp(prefix="vibe-closed-")
         cls.found = render(cls.workdir, os.environ.get("SOLFA_SCENE_SCALE", "1"))
 
     @classmethod
@@ -60,16 +60,16 @@ class Closed(unittest.TestCase):
     def setUp(self):
         self.assertIsNotNone(self.found["STATE"], "the scene did not render:\n" + self.found["log"])
 
-    def test_a_closed_bar_shows_only_solfa(self):
+    def test_a_closed_bar_shows_only_name(self):
         s = self.found["STATE"]
         self.assertEqual(s["barRunning"]["label"], "Northern Lights")
         self.assertTrue(s["barRunning"]["controls"])
-        self.assertEqual(s["barClosed"]["label"], "Solfa", "no stale song")
-        self.assertFalse(s["barClosed"]["controls"], "no transport on a closed Solfa")
+        self.assertEqual(s["barClosed"]["label"], "Vibe Stage", "no stale song")
+        self.assertFalse(s["barClosed"]["controls"], "no transport on a closed YouTube Music")
 
-    def test_the_power_button_is_lit_when_closed_and_starts_solfa(self):
+    def test_the_power_button_is_lit_when_closed_and_starts_ytm(self):
         s = self.found["STATE"]
-        self.assertEqual(s["powerClosed"]["tooltip"], "Turn Solfa on")
+        self.assertEqual(s["powerClosed"]["tooltip"], "Turn YouTube Music on")
         self.assertTrue(s["powerClosed"]["selected"])
         self.assertEqual(s["powerClosed"]["opacity"], 1)
         self.assertTrue(s["powerHover"]["hot"])

@@ -52,7 +52,7 @@ def render(workdir):
 class AccountState(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.workdir = tempfile.mkdtemp(prefix="solfa-account-")
+        cls.workdir = tempfile.mkdtemp(prefix="vibe-account-")
         cls.state, cls.log = render(cls.workdir)
 
     @classmethod

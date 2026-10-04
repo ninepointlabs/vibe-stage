@@ -5,7 +5,7 @@ import qs.Commons
 import qs.Ui
 import "views" as Views
 
-// Solfa running and closed, rendered once offscreen by a private
+// YouTube Music running and closed, rendered once offscreen by a private
 // Quickshell (test_closed.py): the bar pill playing and closed, and the
 // panel's top (song, name, power button) running, with the pointer on the
 // power button, and closed. Saves a picture to $SOLFA_SCENE_OUT and logs
@@ -28,7 +28,7 @@ ShellRoot {
     property string title: hasTrack ? "Northern Lights" : ""
     property string artist: "The Examples"
     property string album: "Placeholder Skies"
-    property string engineLine: closed ? "Solfa is off" : ""
+    property string engineLine: closed ? "YouTube Music is off" : ""
     property string thumb: ""
     property real duration: 214
     property real position: 83
@@ -91,11 +91,11 @@ ShellRoot {
           spacing: 16
           Rectangle {
             width: 280; height: 26; color: Color.bar ? Color.bar.background : "#101014"
-            SolfaBar { id: barRunning; bar: runningBar; anchors.centerIn: parent }
+            VibeStageBar { id: barRunning; bar: runningBar; anchors.centerIn: parent }
           }
           Rectangle {
             width: 280; height: 26; color: Color.bar ? Color.bar.background : "#101014"
-            SolfaBar { id: barClosed; bar: closedBar; anchors.centerIn: parent }
+            VibeStageBar { id: barClosed; bar: closedBar; anchors.centerIn: parent }
           }
         }
 

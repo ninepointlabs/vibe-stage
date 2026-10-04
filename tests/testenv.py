@@ -3,7 +3,7 @@ Python test file that can reach the filesystem (test_bridge.py and friends),
 and mirrored in shell form at the top of tests/run-all.sh for the QML scene
 tests that spawn qmlscene rather than the bridge.
 
-Why this exists: a test run once deleted the owner's LIVE Solfa data dir
+Why this exists: a test run once deleted the owner's LIVE Vibe Stage data dir
 (the Chromium profile with the sign-in) because a test process inherited the
 real HOME/XDG_DATA_HOME - none of them were overridden - and a bridge code
 path (the orphan-lease wipe) computed its delete target from those, in the
@@ -13,7 +13,7 @@ Two independent things happen here, in order:
 
 1. ISOLATION: point HOME/XDG_DATA_HOME/XDG_CACHE_HOME/XDG_CONFIG_HOME/
    XDG_STATE_HOME, and SOLFA_RUNTIME_DIR/SOLFA_PROFILE_DIR/SOLFA_CACHE_DIR,
-   at a fresh temp dir, and set SOLFA_TEST=1 (the marker bin/solfa-bridge's
+   at a fresh temp dir, and set SOLFA_TEST=1 (the marker bin/vibe-stage-bridge's
    delete/rename helpers refuse to touch a real dir under - see
    refuse_if_real_path there). XDG_RUNTIME_DIR/WAYLAND_DISPLAY are left
    alone: the QML scene tests need the real Wayland/Hyprland session.
@@ -39,8 +39,8 @@ import shutil
 import sys
 import tempfile
 
-PLUGIN_ID = "io.github.sirallap.solfa"
-OLD_PLUGIN_ID = "serallap.solfa"
+PLUGIN_ID = "ninepointlabs.vibe-stage"
+OLD_PLUGIN_ID = "ninepointlabs.vibe-stage"
 
 CHECKED_VARS = ("HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_CONFIG_HOME",
                 "XDG_STATE_HOME", "SOLFA_PROFILE_DIR", "SOLFA_CACHE_DIR", "SOLFA_RUNTIME_DIR")
@@ -56,7 +56,7 @@ def real_home():
 
 
 def real_forbidden_dirs():
-    """Every real, live location Solfa's data can be in, current and old
+    """Every real, live location Vibe Stage's data can be in, current and old
     plugin id, for this real user - independent of any env var a test (or a
     bug in this module) controls."""
     home = real_home()
@@ -108,7 +108,7 @@ def isolate():
     owns_root = False
     if not root:
         base = os.environ.get("CLAUDE_SCRATCHPAD_DIR") or os.environ.get("TMPDIR") or tempfile.gettempdir()
-        root = tempfile.mkdtemp(prefix="solfa-testenv-", dir=base)
+        root = tempfile.mkdtemp(prefix="vibe-testenv-", dir=base)
         owns_root = True
 
     root_path = pathlib.Path(root)

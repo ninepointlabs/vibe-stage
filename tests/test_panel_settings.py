@@ -34,7 +34,7 @@ def render(workdir, scale="1", out=None):
         os.symlink(src, os.path.join(ui, name))
     for name, target in (("Commons", os.path.join(SHELL_DIR, "Commons")),
                          ("views", os.path.join(ROOT, "views")), ("lib", os.path.join(ROOT, "lib")),
-                         ("SolfaPanel.qml", os.path.join(ROOT, "Panel.qml")),
+                         ("VibeStagePanel.qml", os.path.join(ROOT, "Panel.qml")),
                          ("shell.qml", os.path.join(HERE, "qml", "PanelScene.qml"))):
         os.symlink(target, os.path.join(cfg, name))
     env = dict(os.environ, QT_QPA_PLATFORM="offscreen", QT_SCALE_FACTOR=scale, XDG_RUNTIME_DIR=workdir)
@@ -56,7 +56,7 @@ def render(workdir, scale="1", out=None):
 class PanelSettings(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.workdir = tempfile.mkdtemp(prefix="solfa-panel-")
+        cls.workdir = tempfile.mkdtemp(prefix="vibe-panel-")
         cls.found = render(cls.workdir, os.environ.get("SOLFA_SCENE_SCALE", "1"), os.environ.get("SOLFA_PANEL_OUT"))
         cls.state = cls.found["STATE"]
 
@@ -88,7 +88,7 @@ class PanelSettings(unittest.TestCase):
         self.assertEqual({k: s[k] for k in ("offCard", "turnOn", "tabs", "hero")},
                          {"offCard": True, "turnOn": True, "tabs": False, "hero": True})
 
-    def test_enter_turns_solfa_on_when_off(self):
+    def test_enter_turns_ytm_on_when_off(self):
         self.assertEqual(self.state["off"]["startsAfterEnter"], 1)
 
     def test_keys_do_nothing_while_signing_in(self):

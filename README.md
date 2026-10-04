@@ -1,175 +1,112 @@
-# Solfa
+# Vibe Stage
 
-YouTube Music for the Omarchy shell: a bar widget with a round cover and
-quick controls, and a keyboard panel for search, queue, library, lyrics and history.
-The YouTube Music web app runs hidden as the engine. It never shows itself
-and never takes focus. Sign-in happens once, in a plain Google window.
+YouTube Music, Pocket Casts, and Audible — in one Omarchy bar chip with a keyboard-first panel.
 
-![The Solfa panel in the Omarchy bar: now playing, queue and search](docs/panel.png)
+![Vibe Stage bar chip](preview-bar.png)
 
-![Search in the Solfa panel](docs/panel-search.png)
+One chip replaces three. The panel divides into source tabs: YouTube Music for your songs and playlists, Pocket Casts for your podcasts, and Audible for your audiobooks. Everything works from the keyboard.
 
-## Requirements
+![Panel: YouTube Music](preview-ytmusic.png)
+![Panel: Audible library](preview-audible.png)
 
-- Omarchy with the shell plugin system (`omarchy plugin --help` works)
-- A Chromium-family browser at one of the absolute paths Solfa
-  looks for (`/usr/bin/chromium`, `/usr/bin/google-chrome-stable`,
-  `/usr/bin/brave`, `/usr/bin/brave-browser`, `/usr/bin/vivaldi-stable`,
-  `/usr/bin/microsoft-edge-stable`, or one under the matching `/opt/...`
-  install), `/usr/bin/python3`, Hyprland and a `systemd --user` session.
+## Built on Solfa
+
+Vibe Stage is a fork of [Solfa](https://github.com/SirAllap/omarchy-solfa), the YouTube Music plugin by [SirAllap](https://github.com/SirAllap). Solfa's engine — the hidden Chromium browser that drives YouTube Music, the DevTools protocol bridge, the sign-in flow, the equalizer, the keyboard panel, and the Hyprland integration — is the foundation this plugin stands on. Every song you play through Vibe Stage owes its smooth experience to SirAllap's work. Thank you.
+
+## Sources
+
+| Source | Engine | Auth | Audio |
+|---|---|---|---|
+| YouTube Music | Hidden Chromium via CDP (from Solfa) | Google sign-in window | Browser audio |
+| Pocket Casts | Python bridge + Pocket Casts API | Email/password | mpv |
+| Audible | Python bridge + Audible API (`audible` package) | Amazon email/password | mpv with DRM decryption |
 
 ## Install
 
 ```bash
-omarchy plugin add https://github.com/sirallap/omarchy-solfa --enable
+omarchy plugin add https://github.com/ninepointlabs/vibe-stage --enable
 ```
 
-Update, or remove it again:
+Requires: Omarchy, a Chromium-family browser, Python 3, mpv, and the `audible` Python package for audiobook playback.
 
 ```bash
-omarchy plugin update io.github.sirallap.solfa
-omarchy plugin remove io.github.sirallap.solfa
+# Audible dependency (one-time):
+python3 -m venv ~/.local/share/ninepointlabs.vibe-stage/audible-venv
+~/.local/share/ninepointlabs.vibe-stage/audible-venv/bin/pip install audible
 ```
 
-Removing the plugin takes down, within about 30 seconds:
+If you already have Solfa or the Pocket Casts plugin enabled, disable them — Vibe Stage replaces both.
 
-- the plugin's own directory (Omarchy removes it directly);
-- the bridge's `systemd --user` unit (`io.github.sirallap.solfa-bridge`);
-- the engine (the hidden Chromium window playing the music);
-- the Hyprland window rule that keeps the engine off-screen;
-- Solfa's global key bindings;
-- the runtime dir (`$XDG_RUNTIME_DIR/io.github.sirallap.solfa`) and the data dir
-  (`~/.local/share/io.github.sirallap.solfa`), including the signed-in profile.
-
-## First run
-
-Open the panel (Super+M or a click) and choose **Sign in**.
-A Google window opens: sign in there. Solfa closes it and starts YouTube
-Music again, signed in (closing the window yourself works too). If YouTube
-Music comes back still signed out, the panel says so, and the next **Sign in**
-asks Google which account to use. Search and play work while signed out too,
-with adverts.
+```bash
+omarchy plugin disable io.github.sirallap.solfa
+omarchy plugin disable ninepointlabs.pocketcasts
+omarchy restart shell
+```
 
 ## Keys
 
-Global (only where the key is free; turn off with the `globalKeys` setting):
-Super+M panel · Super+Alt+M play/pause · Super+Alt+N next · Super+Alt+B previous · Super+Alt+L like.
-Media keys work through Chromium's own MPRIS player.
+**Global** (only where the key is free; turn off in Settings):  
+Super+M panel · Super+Alt+M play/pause · Super+Alt+N next · Super+Alt+B previous · Super+Alt+L like
 
-In the panel: `space` play/pause, `n`/`p` next/previous, `,`/`.` seek 10 s,
-`-`/`=` volume, `m` mute, `f` like, `d` dislike, `r` repeat, `s` shuffle,
-`1`–`5` or `←`/`→` tabs, `/` search, `↵` play or open, `e` play next,
-`a` add to queue, `R` radio, `g` artist, `o` album, `x` remove and `J`/`K`
-move in the queue, `[`/`]` filter or section, `w` show the YouTube window,
-`esc` back or close, `?` all keys. The line at the bottom of the panel shows
-the few you use most (the view's main key, play, next, like); `?` there, typed
-or clicked, lists every key.
+**Bar:** left click opens the panel, middle click play/pause, right click skip, scroll sets volume, Shift+scroll seeks.
 
-Bar: left click opens the panel, middle click plays or pauses, right click
-skips, the wheel sets the volume, Shift+wheel seeks.
+**Panel — every source:**
+| Key | Action |
+|---|---|
+| 1 2 3 | YouTube Music / Podcasts / Audiobooks |
+| ← → | Switch sub-tabs |
+| Space | Play / pause |
+| n / p | Next / previous |
+| , / . | Skip back / forward |
+| - / = | Volume down / up |
+| / | Search (YTM) or filter (Audible) |
+| Ctrl+, | Settings |
+| Esc | Back or close |
+| ? | Show all keys |
 
-During an advert (signed out, or without Premium) the panel offers
-**Skip advert**: it presses the advert's own Skip button once YouTube allows it.
-Solfa also presses that button by itself, once a second, until the advert is gone.
-With Brave as the engine's browser (Settings → Browser for the engine), its
-built-in ad blocker can skip most adverts before they play: turn on "With
-Brave, let its ad blocker fetch its filter lists" so Brave may download them.
-It is off by default, as it means more background traffic and memory, which a
-Premium account gains nothing from. Switching browsers may ask you to sign in again.
+**Panel — YouTube Music:** queue, search, library, lyrics, history — same keys as Solfa. `e` play next, `a` add to queue, `R` radio, `g`/`o` artist/album, `f`/`d` like/dislike, `m` mute, `r` repeat, `s` shuffle.
 
-## Close Solfa
+**Panel — Pocket Casts:** Up Next, In Progress, New, and Podcasts tabs. `q` queue/unqueue, `m` mark played, `x` cycle speed, `r` refresh.
 
-Solfa's engine (the hidden Chromium that plays the music) keeps running
-until you close it. To close it, and stop the music:
-
-- in the panel, the power button in the top-right corner, next to "Solfa";
-- from a terminal, with the installed copy:
-
-  ```bash
-  ~/.config/omarchy/plugins/io.github.sirallap.solfa/bin/solfa quit
-  ```
-
-Closed, the bar shows only Solfa's mark and name, dimmed. A click on it, the
-power button or Space (in the panel) starts it again. To take Solfa out of
-the bar as well, turn the plugin off in Omarchy's settings, then run the
-`quit` above.
-
-The bridge itself keeps running in the background (a `systemd --user` unit,
-`io.github.sirallap.solfa-bridge`) so the shell can reconnect to it after a restart
-without losing the engine. If no shell ever reconnects (the plugin was
-removed, or disabled for good), the bridge's own orphan lease closes the
-engine and itself a short while later; if the plugin is gone from disk at
-that point, it also removes Solfa's data dir (the signed-in profile
-included) and its runtime dir.
-
-## Settings
-
-The gear next to "Solfa" (top-right, beside the power button) opens
-Settings in place of the panel body: Account (name, email and picture from
-your signed-in account; switch account, sign out — or just Sign in while
-signed out), Sound (an equalizer —
-presets or ten bands, a preamp and a loudness compressor — built lazily in
-the page as WebAudio, only once a setting actually needs it), Playback
-(sleep timer, including "end of song", and what happens when Solfa starts),
-Bar and alerts, Keys, Advanced (memory limits, clear cache, erase the
-engine's profile, reset settings) and About. `↑`/`↓` move, `←`/`→` change a
-row's value, `Tab` switches between the section list and the rows, `Enter`
-acts, `Esc` goes back. Every setting also shows up in Omarchy's own plugin
-settings screen (`manifest.json`'s schema). Audio quality (bitrate, codec)
-is not built.
-
-While signed out, a small **Sign in** button sits left of "Solfa" in the
-header (`i` does the same from the keyboard). With YouTube Music Premium a
-**Premium** badge takes its place; a free account shows neither. Premium is
-read from the page's own config (`ytcfg` `IS_SUBSCRIBER`), never from cookies.
-
-## Memory
-
-The YouTube Music page grows while it is open (its own heap, tens of MB an
-hour). Past 400 MB of heap, 800 MB for the page's process (skipping songs grows
-that, not the heap), or 12 hours, the bridge swaps it for a fresh
-page in a new process at the next quiet moment: between two songs (the next
-song waits a few seconds) or after two minutes paused. The queue, the song,
-its place when paused, the volume, repeat and shuffle all come back. The
-engine also starts without extensions, without a spare renderer and without
-the address bar's hidden pages. `SOLFA_RECYCLE_HEAP_MB`, `SOLFA_RECYCLE_RSS_MB`,
-`SOLFA_RECYCLE_HOURS` and `SOLFA_RECYCLE_IDLE` (seconds) change the limits — the
-heap and hours limits are also in Settings > Advanced, applied the next time
-Solfa starts.
-
-## Command line
-
-`bin/solfa status | play-pause | next | prev | like | volume +5 | open | close | toggle | quit | call OP [JSON] | events`
-
-`solfa quit` closes the engine, also when the bridge is gone (for example
-after Solfa was switched off from Omarchy's settings).
-
-## Security note
-
-The engine has no DevTools port at all: it is launched with
-`--remote-debugging-pipe`, so nothing listens on loopback or anywhere else.
-The bridge talks to it over a pair of pipes it holds as the engine's own
-parent process (it spawns the engine itself, with `posix_spawn`), the same
-way it always closes it: by `pidfd`, never by a bare pid. The shell side is
-a private unix socket (0600). The bridge itself runs as a transient
-`systemd --user` unit, started by `Service.qml`, so it (and the pipe) can
-outlive a shell restart without the engine ever needing to be found and
-re-adopted over a network port.
+**Panel — Audible:** In Progress, All, and Finished sub-tabs. `s` cycles sort (Recent / Title / Author), `/` filters by title or author. Enter plays the selected book. Position syncs back to Audible every 30 seconds.
 
 ## How it works
 
-See [docs/design.md](docs/design.md). In short: `bin/solfa-bridge` (Python,
-standard library) runs the hidden Chromium engine with its own profile,
-talks to it over the DevTools protocol on a pipe (`--remote-debugging-pipe`,
-no TCP port), and serves the shell on a private unix socket. `engine/agent.js`
-runs inside the page and pushes every change; `Service.qml` keeps the state;
-the bar widget and panel draw it.
+Three bridges run as child processes of the shell, each on its own Unix socket with the same JSON-line protocol. The service routes every command — play, pause, next, volume — to whichever source is active. Only one plays at a time; starting one pauses the others.
 
-## Tests
+- `bin/vibe-stage-bridge` — YouTube Music engine (forked from Solfa's `bin/solfa-bridge`, 2,888 lines). Hidden Chromium with DevTools Protocol pipe, page agent injection, equalizer. Systemd unit so the engine survives shell restarts.
+
+- `bin/pocketcasts-bridge` — Pocket Casts engine (adapted from Tim's standalone plugin). Talks to `api.pocketcasts.com`, plays through mpv with position sync.
+
+- `bin/audible-bridge` — Audible engine (1,177 lines). Uses the [`audible`](https://pypi.org/project/audible/) Python package for Amazon authentication and device registration. Fetches the library, requests a DRM license with decryption voucher, and plays the AAXC stream through mpv. Listening position is written back every 30 seconds so your phone picks up where you left off. Works with a venv-installed `audible` package — no system-wide dependency.
+
+## Settings
+
+The gear in the top-right corner opens Settings, or use `Ctrl+,`. YouTube Music settings (equalizer, browser, memory limits) are prefixed `ytmusic.` in `shell.json`. Pocket Casts and Audible settings sit under their own prefixes. Every setting also shows up in Omarchy's plugin settings screen.
+
+## CLI
 
 ```bash
-tests/run-all.sh
+# See what's playing
+omarchy-shell ninepointlabs.vibe-stage status
+# Switch source
+omarchy-shell ninepointlabs.vibe-stage setSource podcasts
+# Play/pause on the active source
+omarchy-shell ninepointlabs.vibe-stage playPause
 ```
 
-Parsers and the page agent run in node against invented fixtures; the bridge
-runs against a fake engine (`tests/fake_engine.py`).
+Each bridge has its own CLI too:
+
+```bash
+~/.config/omarchy/plugins/ninepointlabs.vibe-stage/bin/vibe-stage-bridge status
+~/.config/omarchy/plugins/ninepointlabs.vibe-stage/bin/pocketcasts-bridge status
+~/.config/omarchy/plugins/ninepointlabs.vibe-stage/bin/audible-bridge status
+```
+
+## Security
+
+Every bridge runs in a closed environment: an absolute Python from a root-owned system directory (`-I -B`), a cleared `PATH`, no session environment. mpv is started detached with `--no-config` from a trusted binary and receives decryption keys over its JSON IPC socket — never on a command line. The Audible bridge keeps credentials in a 0600 file under `$XDG_STATE_HOME`; the password is never stored.
+
+## License
+
+MIT. Vibe Stage is a derivative work of Solfa (MIT, Copyright (c) 2026 SirAllap) — see [LICENSE](LICENSE).

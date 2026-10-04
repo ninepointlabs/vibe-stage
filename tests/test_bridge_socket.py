@@ -60,10 +60,10 @@ class FakeBridge:
 
 
 def run_scene(windows, scene_ms, linger=0.0):
-    workdir = tempfile.mkdtemp(prefix="solfa-sock-")
+    workdir = tempfile.mkdtemp(prefix="vibe-sock-")
     # AF_UNIX paths are short (108 bytes): the socket lives in its own dir
     # under /tmp, never in the (long) scratch dir.
-    sockdir = tempfile.mkdtemp(prefix="solfa-s-", dir="/tmp")
+    sockdir = tempfile.mkdtemp(prefix="vibe-s-", dir="/tmp")
     try:
         cfg = os.path.join(workdir, "scene")
         os.mkdir(cfg)
