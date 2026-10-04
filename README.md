@@ -6,8 +6,28 @@ YouTube Music, Pocket Casts, and Audible — in one Omarchy bar chip with a keyb
 
 One chip replaces three. The panel divides into source tabs: YouTube Music for your songs and playlists, Pocket Casts for your podcasts, and Audible for your audiobooks. Everything works from the keyboard.
 
-![YouTube Music panel](docs/preview-ytmusic.png)
-![Audible library panel](docs/preview-audible.png)
+<table>
+  <tr>
+    <td><img src="docs/preview-ytmusic.png" alt="YouTube Music queue" width="280"></td>
+    <td><img src="docs/preview-podcasts.png" alt="Pocket Casts Up Next" width="280"></td>
+    <td><img src="docs/preview-audible.png" alt="Audible library" width="280"></td>
+  </tr>
+  <tr>
+    <td align="center">YouTube Music — queue</td>
+    <td align="center">Pocket Casts — Up Next</td>
+    <td align="center">Audible — In Progress</td>
+  </tr>
+  <tr>
+    <td><img src="docs/preview-search.png" alt="YouTube Music search" width="280"></td>
+    <td><img src="docs/preview-lyrics.png" alt="YouTube Music lyrics" width="280"></td>
+    <td></td>
+  </tr>
+  <tr>
+    <td align="center">Search</td>
+    <td align="center">Lyrics</td>
+    <td></td>
+  </tr>
+</table>
 
 
 ## Built on Solfa
