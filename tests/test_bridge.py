@@ -21,7 +21,7 @@ import types
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-BRIDGE = ROOT / "bin" / "solfa-bridge"
+BRIDGE = ROOT / "bin" / "vibe-stage-bridge"
 FAKE = ROOT / "tests" / "fake_engine.py"
 
 
@@ -1615,9 +1615,9 @@ class PureTest(unittest.TestCase):
             state_dir.mkdir(parents=True)
             runtime_dir = tmp / "runtime" / "ninepointlabs.vibe-stage"
             runtime_dir.mkdir(parents=True)
-            old_cache_dir = cache_home / "ninepointlabs.vibe-stage"
+            old_cache_dir = cache_home / "serallap.solfa"
             old_cache_dir.mkdir(parents=True)
-            old_runtime_dir = tmp / "runtime" / "ninepointlabs.vibe-stage"
+            old_runtime_dir = tmp / "runtime" / "serallap.solfa"
             old_runtime_dir.mkdir(parents=True)
             mod = self.load_with_env({
                 "XDG_DATA_HOME": str(data_home), "XDG_CACHE_HOME": str(cache_home),
@@ -1658,7 +1658,7 @@ class PureTest(unittest.TestCase):
         tmp = pathlib.Path(tempfile.mkdtemp(prefix="vibe-migrate-"))
         try:
             data_home = tmp / "data"
-            old_dir = data_home / "ninepointlabs.vibe-stage"
+            old_dir = data_home / "serallap.solfa"
             old_engine_dir = old_dir / "engine"
             old_engine_dir.mkdir(parents=True)
             (old_dir / "shell.json").write_text("{}")  # partial state alongside the profile

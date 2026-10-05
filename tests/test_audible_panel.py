@@ -83,9 +83,13 @@ class AudiblePanel(unittest.TestCase):
         self.assertTrue(s["view"], self.log)
         self.assertFalse(s["signIn"], self.log)
         self.assertFalse(s["loading"], self.log)
-        self.assertEqual(s["rows"], 3, self.log)
+        # It opens on In Progress: the one book started; All has the three.
+        self.assertEqual(s["tab"], "progress", self.log)
+        self.assertEqual(s["rows"], 1, self.log)
+        self.assertEqual(len(s["keys"]["allTitles"]), 3, self.log)
         self.assertTrue(s["firstCurrent"], self.log)
-        self.assertEqual(s["firstSubtitle"], "Ada Example · read by Sam Reader · 9 h 50 min left", self.log)
+        self.assertEqual(s["firstSubtitle"], "Ada Example · read by Sam Reader", self.log)
+        self.assertEqual(s["firstItem"]["progressText"], "1% · 9 h 50 min left", self.log)
 
     def test_keys_leave_the_hidden_sign_in_fields(self):
         # Signed in, the card hides: its fields must not keep the keyboard.

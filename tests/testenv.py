@@ -40,7 +40,10 @@ import sys
 import tempfile
 
 PLUGIN_ID = "ninepointlabs.vibe-stage"
-OLD_PLUGIN_ID = "ninepointlabs.vibe-stage"
+# The ids bin/vibe-stage-bridge knows besides its own: the one it migrates
+# and wipes from, and Solfa's (which may be installed alongside).
+OLD_PLUGIN_ID = "serallap.solfa"
+SOLFA_PLUGIN_ID = "io.github.sirallap.solfa"
 
 CHECKED_VARS = ("HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_CONFIG_HOME",
                 "XDG_STATE_HOME", "SOLFA_PROFILE_DIR", "SOLFA_CACHE_DIR", "SOLFA_RUNTIME_DIR")
@@ -57,12 +60,12 @@ def real_home():
 
 def real_forbidden_dirs():
     """Every real, live location Vibe Stage's data can be in, current and old
-    plugin id, for this real user - independent of any env var a test (or a
+    plugin ids and Solfa's, for this real user - independent of any env var a test (or a
     bug in this module) controls."""
     home = real_home()
     uid = os.getuid()
     dirs = []
-    for plugin_id in (PLUGIN_ID, OLD_PLUGIN_ID):
+    for plugin_id in (PLUGIN_ID, OLD_PLUGIN_ID, SOLFA_PLUGIN_ID):
         dirs.append(home / ".local" / "share" / plugin_id)
         dirs.append(home / ".cache" / plugin_id)
         dirs.append(home / ".local" / "state" / plugin_id)

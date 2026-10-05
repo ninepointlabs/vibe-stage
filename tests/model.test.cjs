@@ -105,8 +105,8 @@ test("global keys: only the free ones, ours do not count as taken", () => {
 
 test("bind Lua unbinds first and calls the service over the shell's IPC", () => {
   const lua = M.bindLua(M.GLOBAL_KEYS.slice(0, 2))
-  assert.match(lua, /pcall\(hl\.unbind, \[\[SUPER \+ M\]\]\); hl\.bind\(\[\[SUPER \+ M\]\], hl\.dsp\.exec_cmd\(\[\[\/usr\/share\/omarchy\/bin\/omarchy-shell shell toggle io\.github\.sirallap\.solfa '\{\}'\]\]\)/)
-  assert.match(lua, /exec_cmd\(\[\[\/usr\/share\/omarchy\/bin\/omarchy-shell io\.github\.sirallap\.solfa playPause\]\]\)/)
+  assert.match(lua, /pcall\(hl\.unbind, \[\[SUPER \+ M\]\]\); hl\.bind\(\[\[SUPER \+ M\]\], hl\.dsp\.exec_cmd\(\[\[\/usr\/share\/omarchy\/bin\/omarchy-shell shell toggle ninepointlabs\.vibe-stage '\{\}'\]\]\)/)
+  assert.match(lua, /exec_cmd\(\[\[\/usr\/share\/omarchy\/bin\/omarchy-shell ninepointlabs\.vibe-stage playPause\]\]\)/)
   // every IPC method a key calls exists on the service's handler
   const svc = fs.readFileSync(path.join(__dirname, "..", "Service.qml"), "utf8")
   for (const k of M.GLOBAL_KEYS) if (k.command !== "toggle") assert.match(svc, new RegExp("function " + k.command + "\\(\\): void"))
@@ -246,9 +246,11 @@ test("settings pushed before the shell has handed over the entry are not real", 
 })
 
 test("settings reset: defaults over the current entry, other keys kept", () => {
-  const next = M.settingsAfterReset({ id: "ninepointlabs.vibe-stage", eqEnabled: true, recycleHours: 30, somethingElse: 7 })
-  assert.equal(next.eqEnabled, false)
-  assert.equal(next.recycleHours, 12)
+  // Old bare keys and prefixed ones alike: the defaults land under the
+  // prefix, which settingValue reads first.
+  const next = M.settingsAfterReset({ id: "ninepointlabs.vibe-stage", eqEnabled: true, "ytmusic.recycleHours": 30, somethingElse: 7 })
+  assert.equal(M.settingValue(next, "eqEnabled", true), false)
+  assert.equal(M.settingValue(next, "recycleHours", 0), 12)
   assert.equal(next.somethingElse, 7)
   assert.equal(next.id, "ninepointlabs.vibe-stage")
 })
