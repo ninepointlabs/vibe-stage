@@ -711,7 +711,7 @@ Panel {
             spacing: Style.space(10)
             Repeater {
               model: root.allKeyHints
-              delegate: Views.KeyHint { required property var modelData; keys: modelData[0]; label: modelData[1]; bar: root.bar; maxWidth: (parent.width - Style.space(10)) / 2 }
+              delegate: Views.KeyHint { required property var modelData; keys: modelData[0]; label: modelData[1]; bar: root.bar; width: maxWidth; maxWidth: (parent.width - Style.space(10)) / 2 }
             }
           }
         }

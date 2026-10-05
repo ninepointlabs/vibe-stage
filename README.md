@@ -20,12 +20,12 @@ One chip replaces three. The panel divides into source tabs: YouTube Music for y
   <tr>
     <td><img src="docs/preview-search.png" alt="YouTube Music search" width="280"></td>
     <td><img src="docs/preview-lyrics.png" alt="YouTube Music lyrics" width="280"></td>
-    <td></td>
+    <td><img src="docs/panel-keys.png" alt="Every key, on ?" width="280"></td>
   </tr>
   <tr>
     <td align="center">Search</td>
     <td align="center">Lyrics</td>
-    <td></td>
+    <td align="center">Every key — <code>?</code></td>
   </tr>
 </table>
 
